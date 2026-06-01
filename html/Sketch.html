@@ -1,0 +1,605 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<html>
+<head>
+<META http-equiv="Content-Type" content="text/html; charset=UTF-8">
+<!--
+This HTML was auto-generated from MATLAB code.
+To make changes, update the MATLAB code and republish this document.
+      -->
+<title>Sketch</title>
+<meta name="generator" content="MATLAB 24.2">
+<link rel="schema.DC" href="http://purl.org/dc/elements/1.1/">
+<meta name="DC.date" content="2025-06-17">
+<meta name="DC.source" content="Sketch.m">
+<style type="text/css">
+html,body,div,span,applet,object,iframe,h1,h2,h3,h4,h5,h6,p,blockquote,pre,a,abbr,acronym,address,big,cite,code,del,dfn,em,font,img,ins,kbd,q,s,samp,small,strike,strong,tt,var,b,u,i,center,dl,dt,dd,ol,ul,li,fieldset,form,label,legend,table,caption,tbody,tfoot,thead,tr,th,td{margin:0;padding:0;border:0;outline:0;font-size:100%;vertical-align:baseline;background:transparent}body{line-height:1}ol,ul{list-style:none}blockquote,q{quotes:none}blockquote:before,blockquote:after,q:before,q:after{content:'';content:none}:focus{outine:0}ins{text-decoration:none}del{text-decoration:line-through}table{border-collapse:collapse;border-spacing:0}
+
+html { min-height:100%; margin-bottom:1px; }
+html body { height:100%; margin:0px; font-family:Arial, Helvetica, sans-serif; font-size:10px; color:#000; line-height:140%; background:#fff none; overflow-y:scroll; }
+html body td { vertical-align:top; text-align:left; }
+
+h1 { padding:0px; margin:0px 0px 25px; font-family:Arial, Helvetica, sans-serif; font-size:1.5em; color:#d55000; line-height:100%; font-weight:normal; }
+h2 { padding:0px; margin:0px 0px 8px; font-family:Arial, Helvetica, sans-serif; font-size:1.2em; color:#000; font-weight:bold; line-height:140%; border-bottom:1px solid #d6d4d4; display:block; }
+h3 { padding:0px; margin:0px 0px 5px; font-family:Arial, Helvetica, sans-serif; font-size:1.1em; color:#000; font-weight:bold; line-height:140%; }
+
+a { color:#005fce; text-decoration:none; }
+a:hover { color:#005fce; text-decoration:underline; }
+a:visited { color:#004aa0; text-decoration:none; }
+
+p { padding:0px; margin:0px 0px 20px; }
+img { padding:0px; margin:0px 0px 20px; border:none; }
+p img, pre img, tt img, li img, h1 img, h2 img { margin-bottom:0px; }
+
+ul { padding:0px; margin:0px 0px 20px 23px; list-style:square; }
+ul li { padding:0px; margin:0px 0px 7px 0px; }
+ul li ul { padding:5px 0px 0px; margin:0px 0px 7px 23px; }
+ul li ol li { list-style:decimal; }
+ol { padding:0px; margin:0px 0px 20px 0px; list-style:decimal; }
+ol li { padding:0px; margin:0px 0px 7px 23px; list-style-type:decimal; }
+ol li ol { padding:5px 0px 0px; margin:0px 0px 7px 0px; }
+ol li ol li { list-style-type:lower-alpha; }
+ol li ul { padding-top:7px; }
+ol li ul li { list-style:square; }
+
+.content { font-size:1.2em; line-height:140%; padding: 20px; }
+
+pre, code { font-size:12px; }
+tt { font-size: 1.2em; }
+pre { margin:0px 0px 20px; }
+pre.codeinput { padding:10px; border:1px solid #d3d3d3; background:#f7f7f7; }
+pre.codeoutput { padding:10px 11px; margin:0px 0px 20px; color:#4c4c4c; }
+pre.error { color:red; }
+
+@media print { pre.codeinput, pre.codeoutput { word-wrap:break-word; width:100%; } }
+
+span.keyword { color:#0000FF }
+span.comment { color:#228B22 }
+span.string { color:#A020F0 }
+span.untermstring { color:#B20000 }
+span.syscmd { color:#B28C00 }
+span.typesection { color:#A0522D }
+
+.footer { width:auto; padding:10px 0px; margin:25px 0px 0px; border-top:1px dotted #878787; font-size:0.8em; line-height:140%; font-style:italic; color:#878787; text-align:left; float:none; }
+.footer p { margin:0px; }
+.footer a { color:#878787; }
+.footer a:hover { color:#878787; text-decoration:underline; }
+.footer a:visited { color:#878787; }
+
+table th { padding:7px 5px; text-align:left; vertical-align:middle; border: 1px solid #d6d4d4; font-weight:bold; }
+table td { padding:7px 5px; text-align:left; vertical-align:top; border:1px solid #d6d4d4; }
+
+
+
+
+
+  </style>
+</head>
+<body>
+<div class="content">
+<h2>Contents</h2>
+<div>
+<ul>
+<li>
+<a href="#2">Parameters</a>
+</li>
+<li>
+<a href="#3">Fast Forward Flag</a>
+</li>
+<li>
+<a href="#4">Main Figure Setup</a>
+</li>
+<li>
+<a href="#5">Uncertainty Figure</a>
+</li>
+<li>
+<a href="#6">Target Placement</a>
+</li>
+<li>
+<a href="#7">Edge Creation</a>
+</li>
+<li>
+<a href="#8">Draw Initial Scene</a>
+</li>
+<li>
+<a href="#9">Agent Creation</a>
+</li>
+<li>
+<a href="#10">Simulation Timer</a>
+</li>
+<li>
+<a href="#11">=== Main Simulation Loop ===</a>
+</li>
+</ul>
+</div>
+<pre class="codeinput">clear; close <span class="string">all</span>; clc;
+</pre>
+<h2 id="2">Parameters</h2>
+<pre class="codeinput">num_targets = 6;
+num_agents = 3;
+max_edges = 8;
+fps = 60;
+dt = 1 / fps;
+</pre>
+<h2 id="3">Fast Forward Flag</h2>
+<pre class="codeinput">fastForwardRequested = false;
+</pre>
+<h2 id="4">Main Figure Setup</h2>
+<pre class="codeinput">mainFig = figure(<span class="string">'Name'</span>, <span class="string">'Agent-Target Simulation'</span>);
+ax = axes(mainFig);
+axis(ax, [0 100 0 100]);
+axis <span class="string">equal</span>;
+grid <span class="string">off</span>;
+axis <span class="string">off</span>;
+hold(ax, <span class="string">'on'</span>);
+
+<span class="comment">% Add Fast Forward Button</span>
+uicontrol(<span class="string">'Style'</span>, <span class="string">'pushbutton'</span>, <span class="string">'String'</span>, <span class="string">'Fast Forward to 500s'</span>, <span class="keyword">...</span>
+    <span class="string">'Position'</span>, [20 20 180 30], <span class="keyword">...</span>
+    <span class="string">'Callback'</span>, @(~,~) assignin(<span class="string">'base'</span>, <span class="string">'fastForwardRequested'</span>, true));
+</pre>
+<img vspace="5" hspace="5" src="Sketch_01.png" alt=""> <h2 id="5">Uncertainty Figure</h2>
+<pre class="codeinput">uncertaintyFig = figure(<span class="string">'Name'</span>, <span class="string">'Objective Function'</span>, <span class="string">'Position'</span>, [100 100 800 400]);
+uncertaintyAxes = axes(uncertaintyFig);
+title(<span class="string">'Objective Function'</span>);
+xlabel(<span class="string">'Time (s)'</span>);
+ylabel(<span class="string">'Objective Value'</span>);
+grid <span class="string">on</span>;
+hold <span class="string">on</span>;
+
+initialCapacity = 500;
+timeHistory = zeros(1, initialCapacity);
+uncertaintyHistory = zeros(1, initialCapacity);
+currentIndex = 1;
+
+uncertaintyPlot = plot(uncertaintyAxes, 0, 0, <span class="string">'b-'</span>, <span class="string">'LineWidth'</span>, 2);
+xlim([0 10]);
+ylim([0 10]);
+</pre>
+<img vspace="5" hspace="5" src="Sketch_02.png" alt=""> <h2 id="6">Target Placement</h2>
+<pre class="codeinput">targets = Target.empty(num_targets, 0);
+minDist = 15;
+placed = 0;
+<span class="keyword">while</span> placed &lt; num_targets
+    pos = [rand()*80 + 10, rand()*80 + 10];
+    valid = all(arrayfun(@(t) norm(pos - t.position) &gt;= minDist, targets(1:placed)));
+    <span class="keyword">if</span> valid
+        placed = placed + 1;
+        targets(placed) = Target(placed, pos);
+    <span class="keyword">end</span>
+<span class="keyword">end</span>
+</pre>
+<h2 id="7">Edge Creation</h2>
+<pre class="codeinput">edges = Edge.empty(0, max_edges);
+adjMatrix = false(num_targets);
+<span class="keyword">for</span> i = 1:num_targets-1
+    <span class="keyword">for</span> j = i+1:num_targets
+        <span class="keyword">if</span> length(edges) &gt;= max_edges
+            <span class="keyword">break</span>;
+        <span class="keyword">end</span>
+        newEdge = [targets(i).position; targets(j).position];
+        valid = true;
+        <span class="keyword">for</span> e = 1:length(edges)
+            existing = [edges(e).targets(1).position; edges(e).targets(2).position];
+            <span class="keyword">if</span> linesIntersect(newEdge(1,:), newEdge(2,:), existing(1,:), existing(2,:))
+                valid = false;
+                <span class="keyword">break</span>;
+            <span class="keyword">end</span>
+        <span class="keyword">end</span>
+        <span class="keyword">if</span> valid
+            edges(end+1) = Edge(length(edges)+1, [targets(i), targets(j)]);
+            adjMatrix(i,j) = true;
+            adjMatrix(j,i) = true;
+        <span class="keyword">end</span>
+    <span class="keyword">end</span>
+<span class="keyword">end</span>
+</pre>
+<h2 id="8">Draw Initial Scene</h2>
+<pre class="codeinput">
+<span class="keyword">for</span> e = 1:length(edges), edges(e).draw(ax); <span class="keyword">end</span>
+<span class="keyword">for</span> t = 1:num_targets, targets(t).draw(ax); <span class="keyword">end</span>
+</pre>
+<img vspace="5" hspace="5" src="Sketch_03.png" alt=""> <h2 id="9">Agent Creation</h2>
+<pre class="codeinput">agents = Agent.empty(num_agents, 0);
+starts = randi(num_targets, num_agents, 1);
+<span class="keyword">for</span> a = 1:num_agents
+    agents(a) = Agent(a, targets(starts(a)).position, 80);
+    agents(a).draw(ax);
+<span class="keyword">end</span>
+</pre>
+<img vspace="5" hspace="5" src="Sketch_04.png" alt=""> <h2 id="10">Simulation Timer</h2>
+<pre class="codeinput">simTime = 0;
+timeDisplay = text(ax, 95, 5, sprintf(<span class="string">'Time: %.2f'</span>, simTime), <span class="keyword">...</span>
+    <span class="string">'FontSize'</span>, 12, <span class="string">'Color'</span>, <span class="string">'k'</span>, <span class="keyword">...</span>
+    <span class="string">'HorizontalAlignment'</span>, <span class="string">'right'</span>, <span class="keyword">...</span>
+    <span class="string">'BackgroundColor'</span>, <span class="string">'w'</span>);
+</pre>
+<img vspace="5" hspace="5" src="Sketch_05.png" alt=""> <h2 id="11">=== Main Simulation Loop ===</h2>
+<pre class="codeinput">
+<span class="keyword">while</span> ishandle(mainFig)
+    axis(ax, [0 100 0 100]);
+
+    <span class="comment">% Check if fast forward is triggered</span>
+    <span class="keyword">if</span> evalin(<span class="string">'base'</span>, <span class="string">'exist(''fastForwardRequested'', ''var'') &amp;&amp; fastForwardRequested'</span>)
+        disp(<span class="string">'Fast-forwarding to 500 seconds...'</span>);
+        <span class="keyword">while</span> simTime &lt; 500
+            <span class="comment">% === Agent + Target Simulation, No Drawing ===</span>
+            <span class="keyword">for</span> a = 1:num_agents
+                agent = agents(a);
+                <span class="keyword">if</span> agent.movementActive
+                    <span class="keyword">if</span> agent.stepIndex &lt;= length(agent.xSteps)
+                        agent.position = [agent.xSteps(agent.stepIndex), agent.ySteps(agent.stepIndex)];
+                        agent.stepIndex = agent.stepIndex + 1;
+                    <span class="keyword">else</span>
+                        agent.movementActive = false;
+                        agent.dwellTime = rand()*2 + 1;
+                    <span class="keyword">end</span>
+                <span class="keyword">elseif</span> agent.dwellTime &gt; 0
+                    agent.dwellTime = agent.dwellTime - dt;
+                <span class="keyword">else</span>
+                    [targetPos, ~] = agent.randomChoice(targets, adjMatrix);
+                    <span class="keyword">if</span> ~isempty(targetPos)
+                        delta = targetPos - agent.position;
+                        agent.orientation = atan2(delta(2), delta(1));
+                        distance = norm(delta);
+                        steps = max(ceil(distance / agent.speed * fps), 1);
+                        agent.xSteps = linspace(agent.position(1), targetPos(1), steps);
+                        agent.ySteps = linspace(agent.position(2), targetPos(2), steps);
+                        agent.stepIndex = 1;
+                        agent.movementActive = true;
+                    <span class="keyword">end</span>
+                <span class="keyword">end</span>
+            <span class="keyword">end</span>
+
+            <span class="comment">% Target Uncertainty Logic</span>
+            currentUncertainty = 0;
+            <span class="keyword">for</span> t = 1:num_targets
+                nearby = Agent.empty(0, 0);
+                <span class="keyword">for</span> a = 1:num_agents
+                    <span class="keyword">if</span> norm(agents(a).position - targets(t).position) &lt; 0.1
+                        nearby(end+1) = agents(a);
+                    <span class="keyword">end</span>
+                <span class="keyword">end</span>
+                targets(t).updateResidingAgents(nearby, simTime);
+                targets(t).updateUncertainty(dt);
+                currentUncertainty = currentUncertainty + targets(t).R;
+            <span class="keyword">end</span>
+
+            <span class="comment">% Log Data</span>
+            simTime = simTime + dt;
+            <span class="keyword">if</span> currentIndex &gt; length(timeHistory)
+                newSize = length(timeHistory) * 2;
+                timeHistory = [timeHistory, zeros(1, newSize - length(timeHistory))];
+                uncertaintyHistory = [uncertaintyHistory, zeros(1, newSize - length(uncertaintyHistory))];
+            <span class="keyword">end</span>
+            timeHistory(currentIndex) = simTime;
+            uncertaintyHistory(currentIndex) = currentUncertainty;
+            currentIndex = currentIndex + 1;
+        <span class="keyword">end</span>
+        disp(<span class="string">'Fast forward complete.'</span>);
+        assignin(<span class="string">'base'</span>, <span class="string">'fastForwardRequested'</span>, false); <span class="comment">% Reset flag</span>
+
+    <span class="keyword">end</span>
+
+    <span class="comment">% === Normal visual simulation step ===</span>
+    <span class="keyword">for</span> a = 1:num_agents
+        agent = agents(a);
+        <span class="keyword">if</span> agent.movementActive
+            <span class="keyword">if</span> agent.stepIndex &lt;= length(agent.xSteps)
+                agent.position = [agent.xSteps(agent.stepIndex), agent.ySteps(agent.stepIndex)];
+                agent.stepIndex = agent.stepIndex + 1;
+            <span class="keyword">else</span>
+                agent.movementActive = false;
+                agent.dwellTime = rand()*2 + 1;
+            <span class="keyword">end</span>
+        <span class="keyword">elseif</span> agent.dwellTime &gt; 0
+            agent.dwellTime = agent.dwellTime - dt;
+        <span class="keyword">else</span>
+            [targetPos, ~] = agent.randomChoice(targets, adjMatrix);
+            <span class="keyword">if</span> ~isempty(targetPos)
+                delta = targetPos - agent.position;
+                agent.orientation = atan2(delta(2), delta(1));
+                distance = norm(delta);
+                steps = max(ceil(distance / agent.speed * fps), 1);
+                agent.xSteps = linspace(agent.position(1), targetPos(1), steps);
+                agent.ySteps = linspace(agent.position(2), targetPos(2), steps);
+                agent.stepIndex = 1;
+                agent.movementActive = true;
+            <span class="keyword">end</span>
+        <span class="keyword">end</span>
+        agent.updatePosition();
+    <span class="keyword">end</span>
+
+    currentUncertainty = 0;
+    <span class="keyword">for</span> t = 1:num_targets
+        nearby = Agent.empty(0, 0);
+        <span class="keyword">for</span> a = 1:num_agents
+            <span class="keyword">if</span> norm(agents(a).position - targets(t).position) &lt; 0.1
+                nearby(end+1) = agents(a);
+            <span class="keyword">end</span>
+        <span class="keyword">end</span>
+        targets(t).updateResidingAgents(nearby, simTime);
+        targets(t).updateUncertainty(dt);
+        currentUncertainty = currentUncertainty + targets(t).R;
+    <span class="keyword">end</span>
+
+    simTime = simTime + dt;
+    set(timeDisplay, <span class="string">'String'</span>, sprintf(<span class="string">'Time: %.2f'</span>, simTime));
+    <span class="keyword">if</span> currentIndex &gt; length(timeHistory)
+        timeHistory = [timeHistory, zeros(1, length(timeHistory))];
+        uncertaintyHistory = [uncertaintyHistory, zeros(1, length(uncertaintyHistory))];
+    <span class="keyword">end</span>
+    timeHistory(currentIndex) = simTime;
+    uncertaintyHistory(currentIndex) = currentUncertainty;
+    currentIndex = currentIndex + 1;
+
+    <span class="comment">% Update Plot</span>
+    <span class="keyword">if</span> mod(currentIndex, 5) == 0
+        <span class="keyword">if</span> currentIndex &gt; 2
+            tData = timeHistory(1:currentIndex-1);
+            uData = uncertaintyHistory(1:currentIndex-1);
+            integralData = (1 / simTime) * cumtrapz(tData(:), uData(:));
+            set(uncertaintyPlot, <span class="string">'XData'</span>, tData, <span class="string">'YData'</span>, integralData);
+            <span class="keyword">if</span> tData(end) &gt; xlim(uncertaintyAxes)*0.9
+                xlim(uncertaintyAxes, [0 tData(end)*1.1]);
+            <span class="keyword">end</span>
+            <span class="keyword">if</span> max(integralData) &gt; ylim(uncertaintyAxes)*0.9
+                ylim(uncertaintyAxes, [0 max(integralData)*1.1]);
+            <span class="keyword">end</span>
+        <span class="keyword">end</span>
+    <span class="keyword">end</span>
+
+    drawnow;
+
+<span class="keyword">end</span>
+</pre>
+<img vspace="5" hspace="5" src="Sketch_06.png" alt=""> <p class="footer">
+<br>
+<a href="https://www.mathworks.com/products/matlab/">Published with MATLAB&reg; R2024b</a>
+<br>
+</p>
+</div>
+<!--
+##### SOURCE BEGIN #####
+clear; close all; clc;
+
+%% Parameters
+num_targets = 6;
+num_agents = 3;
+max_edges = 8;
+fps = 60;
+dt = 1 / fps;
+
+%% Fast Forward Flag
+fastForwardRequested = false;
+
+%% Main Figure Setup
+mainFig = figure('Name', 'Agent-Target Simulation');
+ax = axes(mainFig);
+axis(ax, [0 100 0 100]);
+axis equal;
+grid off;
+axis off;
+hold(ax, 'on');
+
+% Add Fast Forward Button
+uicontrol('Style', 'pushbutton', 'String', 'Fast Forward to 500s', ...
+    'Position', [20 20 180 30], ...
+    'Callback', @(~,~) assignin('base', 'fastForwardRequested', true));
+
+%% Uncertainty Figure
+uncertaintyFig = figure('Name', 'Objective Function', 'Position', [100 100 800 400]);
+uncertaintyAxes = axes(uncertaintyFig);
+title('Objective Function');
+xlabel('Time (s)');
+ylabel('Objective Value');
+grid on;
+hold on;
+
+initialCapacity = 500;
+timeHistory = zeros(1, initialCapacity);
+uncertaintyHistory = zeros(1, initialCapacity);
+currentIndex = 1;
+
+uncertaintyPlot = plot(uncertaintyAxes, 0, 0, 'b-', 'LineWidth', 2);
+xlim([0 10]);
+ylim([0 10]);
+
+%% Target Placement
+targets = Target.empty(num_targets, 0);
+minDist = 15;
+placed = 0;
+while placed < num_targets
+    pos = [rand()*80 + 10, rand()*80 + 10];
+    valid = all(arrayfun(@(t) norm(pos - t.position) >= minDist, targets(1:placed)));
+    if valid
+        placed = placed + 1;
+        targets(placed) = Target(placed, pos);
+    end
+end
+
+%% Edge Creation
+edges = Edge.empty(0, max_edges);
+adjMatrix = false(num_targets);
+for i = 1:num_targets-1
+    for j = i+1:num_targets
+        if length(edges) >= max_edges
+            break;
+        end
+        newEdge = [targets(i).position; targets(j).position];
+        valid = true;
+        for e = 1:length(edges)
+            existing = [edges(e).targets(1).position; edges(e).targets(2).position];
+            if linesIntersect(newEdge(1,:), newEdge(2,:), existing(1,:), existing(2,:))
+                valid = false;
+                break;
+            end
+        end
+        if valid
+            edges(end+1) = Edge(length(edges)+1, [targets(i), targets(j)]);
+            adjMatrix(i,j) = true;
+            adjMatrix(j,i) = true;
+        end
+    end
+end
+
+%% Draw Initial Scene
+for e = 1:length(edges), edges(e).draw(ax); end
+for t = 1:num_targets, targets(t).draw(ax); end
+
+%% Agent Creation
+agents = Agent.empty(num_agents, 0);
+starts = randi(num_targets, num_agents, 1);
+for a = 1:num_agents
+    agents(a) = Agent(a, targets(starts(a)).position, 80);
+    agents(a).draw(ax);
+end
+
+%% Simulation Timer
+simTime = 0;
+timeDisplay = text(ax, 95, 5, sprintf('Time: %.2f', simTime), ...
+    'FontSize', 12, 'Color', 'k', ...
+    'HorizontalAlignment', 'right', ...
+    'BackgroundColor', 'w');
+
+%% === Main Simulation Loop ===
+while ishandle(mainFig)
+    axis(ax, [0 100 0 100]);
+
+    % Check if fast forward is triggered
+    if evalin('base', 'exist(''fastForwardRequested'', ''var'') && fastForwardRequested')
+        disp('Fast-forwarding to 500 seconds...');
+        while simTime < 500
+            % === Agent + Target Simulation, No Drawing ===
+            for a = 1:num_agents
+                agent = agents(a);
+                if agent.movementActive
+                    if agent.stepIndex <= length(agent.xSteps)
+                        agent.position = [agent.xSteps(agent.stepIndex), agent.ySteps(agent.stepIndex)];
+                        agent.stepIndex = agent.stepIndex + 1;
+                    else
+                        agent.movementActive = false;
+                        agent.dwellTime = rand()*2 + 1;
+                    end
+                elseif agent.dwellTime > 0
+                    agent.dwellTime = agent.dwellTime - dt;
+                else
+                    [targetPos, ~] = agent.randomChoice(targets, adjMatrix);
+                    if ~isempty(targetPos)
+                        delta = targetPos - agent.position;
+                        agent.orientation = atan2(delta(2), delta(1));
+                        distance = norm(delta);
+                        steps = max(ceil(distance / agent.speed * fps), 1);
+                        agent.xSteps = linspace(agent.position(1), targetPos(1), steps);
+                        agent.ySteps = linspace(agent.position(2), targetPos(2), steps);
+                        agent.stepIndex = 1;
+                        agent.movementActive = true;
+                    end
+                end
+            end
+            
+            % Target Uncertainty Logic
+            currentUncertainty = 0;
+            for t = 1:num_targets
+                nearby = Agent.empty(0, 0);
+                for a = 1:num_agents
+                    if norm(agents(a).position - targets(t).position) < 0.1
+                        nearby(end+1) = agents(a);
+                    end
+                end
+                targets(t).updateResidingAgents(nearby, simTime);
+                targets(t).updateUncertainty(dt);
+                currentUncertainty = currentUncertainty + targets(t).R;
+            end
+            
+            % Log Data
+            simTime = simTime + dt;
+            if currentIndex > length(timeHistory)
+                newSize = length(timeHistory) * 2;
+                timeHistory = [timeHistory, zeros(1, newSize - length(timeHistory))];
+                uncertaintyHistory = [uncertaintyHistory, zeros(1, newSize - length(uncertaintyHistory))];
+            end
+            timeHistory(currentIndex) = simTime;
+            uncertaintyHistory(currentIndex) = currentUncertainty;
+            currentIndex = currentIndex + 1;
+        end
+        disp('Fast forward complete.');
+        assignin('base', 'fastForwardRequested', false); % Reset flag
+        
+    end
+
+    % === Normal visual simulation step ===
+    for a = 1:num_agents
+        agent = agents(a);
+        if agent.movementActive
+            if agent.stepIndex <= length(agent.xSteps)
+                agent.position = [agent.xSteps(agent.stepIndex), agent.ySteps(agent.stepIndex)];
+                agent.stepIndex = agent.stepIndex + 1;
+            else
+                agent.movementActive = false;
+                agent.dwellTime = rand()*2 + 1;
+            end
+        elseif agent.dwellTime > 0
+            agent.dwellTime = agent.dwellTime - dt;
+        else
+            [targetPos, ~] = agent.randomChoice(targets, adjMatrix);
+            if ~isempty(targetPos)
+                delta = targetPos - agent.position;
+                agent.orientation = atan2(delta(2), delta(1));
+                distance = norm(delta);
+                steps = max(ceil(distance / agent.speed * fps), 1);
+                agent.xSteps = linspace(agent.position(1), targetPos(1), steps);
+                agent.ySteps = linspace(agent.position(2), targetPos(2), steps);
+                agent.stepIndex = 1;
+                agent.movementActive = true;
+            end
+        end
+        agent.updatePosition();
+    end
+
+    currentUncertainty = 0;
+    for t = 1:num_targets
+        nearby = Agent.empty(0, 0);
+        for a = 1:num_agents
+            if norm(agents(a).position - targets(t).position) < 0.1
+                nearby(end+1) = agents(a);
+            end
+        end
+        targets(t).updateResidingAgents(nearby, simTime);
+        targets(t).updateUncertainty(dt);
+        currentUncertainty = currentUncertainty + targets(t).R;
+    end
+
+    simTime = simTime + dt;
+    set(timeDisplay, 'String', sprintf('Time: %.2f', simTime));
+    if currentIndex > length(timeHistory)
+        timeHistory = [timeHistory, zeros(1, length(timeHistory))];
+        uncertaintyHistory = [uncertaintyHistory, zeros(1, length(uncertaintyHistory))];
+    end
+    timeHistory(currentIndex) = simTime;
+    uncertaintyHistory(currentIndex) = currentUncertainty;
+    currentIndex = currentIndex + 1;
+
+    % Update Plot
+    if mod(currentIndex, 5) == 0
+        if currentIndex > 2
+            tData = timeHistory(1:currentIndex-1);
+            uData = uncertaintyHistory(1:currentIndex-1);
+            integralData = (1 / simTime) * cumtrapz(tData(:), uData(:));
+            set(uncertaintyPlot, 'XData', tData, 'YData', integralData);
+            if tData(end) > xlim(uncertaintyAxes)*0.9
+                xlim(uncertaintyAxes, [0 tData(end)*1.1]);
+            end
+            if max(integralData) > ylim(uncertaintyAxes)*0.9
+                ylim(uncertaintyAxes, [0 max(integralData)*1.1]);
+            end
+        end
+    end
+
+    drawnow;
+    
+end
+
+##### SOURCE END #####
+-->
+</body>
+</html>
