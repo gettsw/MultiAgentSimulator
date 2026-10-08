@@ -8,8 +8,8 @@ classdef LinearAgent < handle
         pathIndex = 1                    
         current_target_idx = []
         dwellRemaining double = 0
-        type string = "Default"
-        color = [0.8 0.2 0.2]; 
+        type string = "Linear"         % Identifies it to your policyMap
+        color = [0.8 0.2 0.2];      
         size = 8;
         graphicHandle; 
         textHandle; 
@@ -17,69 +17,85 @@ classdef LinearAgent < handle
         initialPosition; 
         initialTargetIdx;               
     end
-
     methods
         function obj = LinearAgent(index, position, maxSpeed)
             obj.index = index;
-            obj.state = KinematicState(position, maxSpeed, 0);
+            % Ensure pos is saved as a clean row vector [1x2]
+            rowPos = position(:)';
+            obj.state = KinematicState(rowPos, maxSpeed, 15);
             obj.controller = PathFollowerController();
-            obj.initialPosition = position;
+            obj.initialPosition = rowPos;
         end
-
         function resetToInitial(obj)
             obj.state.pos = obj.initialPosition;
             obj.state.vel = [0 0];
+            obj.state.acc = [0 0];
             obj.state.ori = 0;
             obj.path = [];
             obj.pathIndex = 1;
             obj.dwellRemaining = 0;
             obj.current_target_idx = obj.initialTargetIdx;
         end
-
         function update(obj, dt)
             if isempty(obj.path)
-                vCmd = [0 0];
+                obj.state.acc = [0 0];
+                obj.state.vel = [0 0];
             else
-                [arrived, vCmd, nextIdx] = obj.controller.computeControl(obj.state, obj.path, obj.pathIndex, dt);
-                obj.pathIndex = nextIdx; 
-
-                if arrived
-                    obj.path = [];
-                    obj.pathIndex = 1;
+                % Get the coordinate position of the next waypoint in the path matrix
+                % (Handles path as either a matrix of row coordinates or an array of objects)
+                if isobject(obj.path)
+                    nextPoint = obj.path(obj.pathIndex).position(:)';
+                else
+                    nextPoint = obj.path(obj.pathIndex, :);
+                end
+                
+                % Calculate direction vector and distance
+                toTarget = nextPoint - obj.state.pos;
+                distance = norm(toTarget);
+                
+                % Maximum distance the agent can travel this frame at full speed
+                maxStep = obj.state.maxSpeed * dt;
+                
+                if distance <= maxStep
+                    % --- ARRIVED AT WAYPOINT ---
+                    obj.state.pos = nextPoint; % Snap precisely to the point
+                    obj.state.vel = [0 0];
+                    
+                    obj.pathIndex = obj.pathIndex + 1;
+                    if obj.pathIndex > size(obj.path, 1) || (isobject(obj.path) && obj.pathIndex > numel(obj.path))
+                        obj.path = [];
+                        obj.pathIndex = 1;
+                    end
+                else
+                    % --- CONSTANT SPEED MOVE ---
+                    dir = toTarget / distance;
+                    obj.state.vel = dir * obj.state.maxSpeed;
+                    obj.state.pos = obj.state.pos + obj.state.vel * dt;
+                    obj.state.acc = [0 0];
+                    
+                    % Calculate orientation angle (heading) based on movement direction
+                    obj.state.ori = atan2(dir(2), dir(1));
                 end
             end
             
-            % First-order linear dynamics
-            obj.state.vel = vCmd;
-            obj.state.pos = obj.state.pos + vCmd * dt;
-
-            % Update orientation based on velocity direction
-            if norm(vCmd) > 1e-5
-                obj.state.ori = atan2(vCmd(2), vCmd(1));
-            end
+           
+            obj.updateVisuals();
         end
-
         function draw(obj, ax)
             obj.ax = ax;
-            if ~isempty(obj.graphicHandle) && isvalid(obj.graphicHandle)
-                delete(obj.graphicHandle);
-            end
+            if ~isempty(obj.graphicHandle) && isvalid(obj.graphicHandle), delete(obj.graphicHandle); end
             [x, y] = obj.calculateVertices();
             obj.graphicHandle = patch(ax, x, y, obj.color, 'EdgeColor', 'k', 'FaceAlpha', 0.8);
             obj.textHandle = text(ax, obj.state.pos(1), obj.state.pos(2), num2str(obj.index), ...
                 'HorizontalAlignment', 'center', 'FontWeight', 'bold', 'Color', 'w', 'FontSize', 8);
         end
-
         function updateVisuals(obj)
-            if isempty(obj.graphicHandle) || ~isgraphics(obj.graphicHandle)
-                return;
-            end
+            if isempty(obj.graphicHandle) || ~isgraphics(obj.graphicHandle), return; end
             [x, y] = obj.calculateVertices();
             set(obj.graphicHandle, 'XData', x, 'YData', y);
             set(obj.textHandle, 'Position', [obj.state.pos(1), obj.state.pos(2), 0]);
         end
     end
-
     methods (Access=private)
         function [x, y] = calculateVertices(obj)
             h = obj.size * sqrt(3)/2;

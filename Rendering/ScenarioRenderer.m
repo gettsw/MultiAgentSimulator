@@ -96,6 +96,7 @@ classdef ScenarioRenderer < handle
         end
 
         function renderAgents(obj, model)
+            for t = 1:numel(model.targets), model.targets(t).updateBar(); end
             for k = 1:numel(model.agents)
                 a = model.agents(k);
                 if isempty(a.graphicHandle) || ~isgraphics(a.graphicHandle)

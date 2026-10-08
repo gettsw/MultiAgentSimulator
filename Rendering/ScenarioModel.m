@@ -3,19 +3,88 @@ classdef ScenarioModel < handle
         agents = []
         targets = Target.empty
         edges = Edge.empty
-        walls = [] 
+        walls = []
         cumUncertaintyIntegral = 0
         lastLogTime = 0
         lastUncertainty = 0
         hasLastSample = false
         policyMap
+        activePolicy = 'Random Walk'
+        uncertaintyMode = 'Dynamic Uncertainty' % Added for Dynamic vs. Static support
     end
 
     methods
         function obj = ScenarioModel()
             obj.policyMap = containers.Map('KeyType','char','ValueType','any');
-            obj.policyMap('Default') = RandomWalkPolicy();
-            obj.policyMap('Energy') = BatteryEfficientPolicy();
+
+            % Instantiate available policy objects
+            rwPolicy  = RandomWalkPolicy();
+            rhcPolicy = RHCPolicy();
+
+            % Check if DivergentRHCPolicy exists; fall back to RHCPolicy if not
+            if exist('DivergentRHCPolicy', 'class') == 8
+                divPolicy = DivergentRHCPolicy();
+            else
+                divPolicy = rhcPolicy;
+            end
+
+            % Check if JointRHCPolicy exists; fall back to RHCPolicy if not
+            if exist('JointRHCPolicy', 'class') == 8
+                jointPolicy = JointRHCPolicy();
+            else
+                jointPolicy = rhcPolicy;
+            end
+
+            if exist('JointRHCPolicyN', 'class') == 8
+                jointPolicyN = JointRHCPolicyN();
+            else
+                jointPolicyN = rhcPolicy;
+            end
+
+            % Map UI Dropdown options to DISTINCT policy objects
+            obj.policyMap('Random Walk')      = rwPolicy;
+            obj.policyMap('Classical RHC [1]') = rhcPolicy;
+            obj.policyMap('Divergent RHC')    = divPolicy;
+            obj.policyMap('Joint RHC')        = jointPolicy;
+            obj.policyMap('Joint RHC N')        = jointPolicyN;
+
+            % Agent type fallbacks
+            obj.policyMap('Default') = rwPolicy;
+            obj.policyMap('Linear')  = rhcPolicy;
+
+            % Optional: map Energy if BatteryEfficientPolicy exists
+            if exist('BatteryEfficientPolicy', 'class') == 8
+                obj.policyMap('Energy') = BatteryEfficientPolicy();
+            else
+                obj.policyMap('Energy') = rhcPolicy;
+            end
+        end
+
+        function setUncertaintyMode(obj, mode)
+            if ischar(mode) || isstring(mode)
+                obj.uncertaintyMode = char(mode);
+            end
+        end
+
+        function setActivePolicy(obj, policyName)
+            if ischar(policyName) || isstring(policyName)
+                obj.activePolicy = char(policyName);
+            end
+        end
+
+        function pol = getPolicyForAgent(obj, a)
+            % 1. Try resolving using global active policy set by MainUI
+            if obj.policyMap.isKey(obj.activePolicy)
+                pol = obj.policyMap(obj.activePolicy);
+                return;
+            end
+
+            % 2. Fall back to individual agent type property if set
+            if isprop(a, 'type') && obj.policyMap.isKey(a.type)
+                pol = obj.policyMap(a.type);
+            else
+                pol = obj.policyMap('Default');
+            end
         end
 
         function addWall(obj, p1, p2)
@@ -37,6 +106,32 @@ classdef ScenarioModel < handle
 
         function step(obj, dtSim, simTime)
             if isempty(obj.agents), return; end
+
+            % 1. UPDATE RESIDING AGENTS AT TARGETS FIRST
+            detectionRadius = 1.2;
+            if ~isempty(obj.targets)
+                for t = 1:numel(obj.targets)
+                    nearby = [];
+                    for a_idx = 1:numel(obj.agents)
+                        a = obj.agents(a_idx);
+                        distToTarget = norm(a.state.pos - obj.targets(t).position);
+                        if distToTarget < detectionRadius
+                            if isempty(nearby), nearby = a; else, nearby(end+1) = a; end
+                        end
+                    end
+                    obj.targets(t).updateResidingAgents(nearby, simTime);
+                end
+            end
+
+            % 2. UPDATE TARGET UNCERTAINTIES & REFRESH SPIKE STATES
+            % Both modes integrate with dtSim; mode string dictates if A(t) spikes or stays A_base
+            if ~isempty(obj.targets)
+                for tIdx = 1:numel(obj.targets)
+                    obj.targets(tIdx).updateUncertainty(dtSim, simTime, obj.uncertaintyMode);
+                end
+            end
+
+            % 3. UPDATE AGENT STATES AND EXECUTE POLICIES
             for k = 1:numel(obj.agents)
                 a = obj.agents(k);
                 if isprop(a, 'dwellRemaining') && a.dwellRemaining > 0
@@ -63,6 +158,30 @@ classdef ScenarioModel < handle
             end
         end
 
+        function [uNow, JNow] = updateTargetsAndLogObjective(obj, simTime, dtSim)
+            % 1. AGGREGATE CURRENT TOTAL UNCERTAINTY ACROSS TARGETS
+            uNow = 0;
+            for t = 1:numel(obj.targets)
+                uNow = uNow + obj.targets(t).R;
+            end
+
+            % 2. INTEGRATE CUMULATIVE OBJECTIVE (TRAPEZOIDAL RULE)
+            if ~obj.hasLastSample
+                obj.lastLogTime = simTime;
+                obj.lastUncertainty = uNow;
+                obj.hasLastSample = true;
+            else
+                dt = simTime - obj.lastLogTime;
+                if dt > 0
+                    obj.cumUncertaintyIntegral = obj.cumUncertaintyIntegral + 0.5 * (obj.lastUncertainty + uNow) * dt;
+                    obj.lastLogTime = simTime;
+                    obj.lastUncertainty = uNow;
+                end
+            end
+
+            % 3. COMPUTE RUNNING TIME-AVERAGED COST J
+            JNow = obj.cumUncertaintyIntegral / max(eps, simTime);
+        end
         function [e, ok, msg] = addEdgeByTargets(obj, t1Idx, t2Idx)
             e = Edge.empty; ok = false; msg = "";
             pStart = obj.targets(t1Idx).position;
@@ -76,7 +195,7 @@ classdef ScenarioModel < handle
 
         function path = planShortestPath(obj, pStart, pEnd)
             nodes = [pStart; pEnd];
-            buffer = 1.2; 
+            buffer = 1.2;
             for i = 1:size(obj.walls, 1)
                 w = obj.walls(i, :);
                 p1 = [w(1),w(2)]; p2 = [w(3),w(4)];
@@ -179,32 +298,6 @@ classdef ScenarioModel < handle
             end
         end
 
-        function [uNow, JNow] = updateTargetsAndLogObjective(obj, simTime, dtSim)
-            uNow = 0; detectionRadius = 1.2; 
-            for t = 1:numel(obj.targets)
-                nearby = [];
-                for a_idx = 1:numel(obj.agents)
-                    a = obj.agents(a_idx);
-                    distToTarget = norm(a.state.pos - obj.targets(t).position);
-                    if distToTarget < detectionRadius
-                        if isempty(nearby), nearby = a; else, nearby(end+1) = a; end
-                    end
-                end
-                obj.targets(t).updateResidingAgents(nearby, simTime);
-                obj.targets(t).updateUncertainty(dtSim);
-                uNow = uNow + obj.targets(t).R;
-            end
-            if ~obj.hasLastSample
-                obj.lastLogTime = simTime; obj.lastUncertainty = uNow; obj.hasLastSample = true;
-            else
-                dt = simTime - obj.lastLogTime;
-                if dt > 0
-                    obj.cumUncertaintyIntegral = obj.cumUncertaintyIntegral + 0.5 * (obj.lastUncertainty + uNow) * dt;
-                    obj.lastLogTime = simTime; obj.lastUncertainty = uNow;
-                end
-            end
-            JNow = obj.cumUncertaintyIntegral / max(eps, simTime);
-        end
 
         function s = exportLayout(obj)
             s.targets = reshape([obj.targets.position], 2, []).';
@@ -236,11 +329,15 @@ classdef ScenarioModel < handle
             a = []; ok = false; msg = "";
             [tIdx, dist] = obj.findNearestTarget(clickPos);
             if isempty(tIdx) || dist > tol, msg = "Click near target"; return; end
+
             if nargin > 4 && strcmpi(type, "Energy")
                 a = EnergyAgent(numel(obj.agents)+1, obj.targets(tIdx).position, speed);
+            elseif nargin > 4 && strcmpi(type, "Linear")
+                a = LinearAgent(numel(obj.agents)+1, obj.targets(tIdx).position, speed);
             else
                 a = DefaultAgent(numel(obj.agents)+1, obj.targets(tIdx).position, speed);
             end
+
             a.current_target_idx = tIdx;
             a.initialTargetIdx = tIdx;
             a.initialPosition = a.state.pos;
@@ -251,12 +348,26 @@ classdef ScenarioModel < handle
         function clearAll(obj)
             obj.agents = []; obj.targets = Target.empty; obj.edges = Edge.empty;
             obj.walls = []; obj.cumUncertaintyIntegral = 0; obj.hasLastSample = false;
+            obj.lastLogTime = 0; obj.lastUncertainty = 0;
+            obj.resetPolicyReservations();
+        end
+
+        function resetPolicyReservations(obj)
+            % RHCPolicy keeps a persistent reservation table; stale locks survive resets otherwise
+            pols = obj.policyMap.values;
+            for k = 1:numel(pols)
+                if ismethod(pols{k}, 'resetReservations'), pols{k}.resetReservations(); end
+            end
         end
 
         function resetSimulationState(obj)
-            obj.cumUncertaintyIntegral = 0; obj.hasLastSample = false;
+            obj.cumUncertaintyIntegral = 0;
+            obj.hasLastSample = false;
+            obj.lastLogTime = 0;
+            obj.lastUncertainty = 0;
             for k = 1:numel(obj.agents), obj.agents(k).resetToInitial(); end
             for t = 1:numel(obj.targets), obj.targets(t).reset(); end
+            obj.resetPolicyReservations();
         end
 
         function [idx, dist] = findNearestTarget(obj, pos)
@@ -279,15 +390,9 @@ classdef ScenarioModel < handle
             e = [];
             for k = 1:numel(obj.edges)
                 ids = [obj.edges(k).targets.index];
-                if all(ismember([t1, t2], ids)), e = obj.edges(k); return; end
-            end
-        end
-
-        function pol = getPolicyForAgent(obj, a)
-            if isprop(a, 'type') && obj.policyMap.isKey(a.type)
-                pol = obj.policyMap(a.type);
-            else
-                pol = obj.policyMap('Default');
+                % Exact match; ismember-based check made findEdge(i,i) return any edge touching i,
+                % so "hold at current node" commands sent agents down a random edge
+                if isequal(ids, [t1 t2]) || isequal(ids, [t2 t1]), e = obj.edges(k); return; end
             end
         end
     end
