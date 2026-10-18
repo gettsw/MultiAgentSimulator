@@ -21,7 +21,7 @@ classdef BatteryEfficientPolicy < handle
             
             for i = 1:numel(nbrs)
                 targetPos = model.targets(nbrs(i)).position;
-                d = norm(targetPos - agent.position);
+                d = norm(targetPos - agent.state.pos);
                 if d < minDist
                     minDist = d;
                     bestIdx = nbrs(i);

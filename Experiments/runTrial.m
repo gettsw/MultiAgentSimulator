@@ -17,7 +17,7 @@ end
 layoutFile = char(p.Layout);                 % file name in Configurations/, or any full path
 if ~isfile(layoutFile), layoutFile = fullfile(root, 'Configurations', layoutFile); end
 tmp = load(layoutFile, 's');
-model = ScenarioModel();
+model = ScenarioModel([], @(idx, pos, sp) LinearAgent(idx, pos, sp));
 model.importLayout(tmp.s);
 for t = model.targets
     t.configure(p);
@@ -31,7 +31,7 @@ end
 assert(all(starts >= 1 & starts <= nT & starts == round(starts)), ...
     'AgentStarts %s must be target indices 1..%d of %s', mat2str(starts), nT, char(p.Layout));
 for k = 1:p.NumAgents
-    model.addAgentOnTarget(model.targets(starts(k)).position, p.AgentSpeed, 1e-6, "Linear");
+    model.addAgentOnTarget(model.targets(starts(k)).position, p.AgentSpeed, 1e-6);
 end
 
 model.setActivePolicy(char(p.Policy));

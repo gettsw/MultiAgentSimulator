@@ -1,14 +1,15 @@
 classdef SimulationController < handle
     properties
         model; renderer; clock; timerObj; isRunning = false;
-        timeCallback; statusCallback; objectiveCallback;
+        timeCallback; statusCallback; objectiveCallback; stateCallback;
         activePolicy = 'Divergent RHC';
     end
     
     methods
-        function obj = SimulationController(model, renderer, clock, timeCb, statusCb, objCb)
+        function obj = SimulationController(model, renderer, clock, timeCb, statusCb, objCb, stateCb)
             obj.model = model; obj.renderer = renderer; obj.clock = clock;
             obj.timeCallback = timeCb; obj.statusCallback = statusCb; obj.objectiveCallback = objCb;
+            if nargin >= 7, obj.stateCallback = stateCb; end
             obj.timerObj = timer('ExecutionMode','fixedSpacing','Period',0.03,'TimerFcn',@(~,~)obj.onTimerTick());
         end
         
@@ -23,11 +24,13 @@ classdef SimulationController < handle
             if obj.clock.isFinished(), obj.reset(); end
             if obj.isRunning, return; end
             obj.isRunning = true; start(obj.timerObj);
+            obj.notifyState();
         end
         
         function pause(obj)
             obj.isRunning = false;
             if isvalid(obj.timerObj), stop(obj.timerObj); end
+            obj.notifyState();
         end
         
         function setEndTime(obj, tEnd)
@@ -56,6 +59,7 @@ classdef SimulationController < handle
         
         function runToEnd(obj)
             obj.pause();
+            obj.isRunning = true; obj.notifyState();
             while ~obj.clock.isFinished()
                 dtSim = obj.clock.tick();
                 obj.model.step(dtSim, obj.clock.currentTime);
@@ -67,6 +71,11 @@ classdef SimulationController < handle
                 end
             end
             obj.renderer.renderAgents(obj.model);
+            obj.isRunning = false; obj.notifyState();
+        end
+
+        function notifyState(obj)
+            if ~isempty(obj.stateCallback), obj.stateCallback(obj.isRunning); end
         end
         
         function onTimerTick(obj)

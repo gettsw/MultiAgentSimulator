@@ -8,56 +8,48 @@ classdef ScenarioModel < handle
         lastLogTime = 0
         lastUncertainty = 0
         hasLastSample = false
-        policyMap
+        policyMap               % name -> persistent policy instance (experiments read stats off these)
         activePolicy = 'Random Walk'
         uncertaintyMode = 'Dynamic Uncertainty' % Added for Dynamic vs. Static support
+        pathPlanner
+        agentFactory
+        bounds = [0 100 0 100]  % [xMin xMax yMin yMax]
+    end
+
+    properties (Dependent)
+        policy
     end
 
     methods
-        function obj = ScenarioModel()
+        function obj = ScenarioModel(pathPlanner, agentFactory)
+            if nargin < 1 || isempty(pathPlanner), pathPlanner = DijkstraCornerPlanner(); end
+            if nargin < 2 || isempty(agentFactory)
+                agentFactory = @(idx, pos, sp) DefaultAgent(idx, pos, sp);
+            end
+            obj.pathPlanner  = pathPlanner;
+            obj.agentFactory = agentFactory;
+
+            % One instance per registered policy, kept for the model's lifetime
+            reg = ComponentRegistry();
             obj.policyMap = containers.Map('KeyType','char','ValueType','any');
-
-            % Instantiate available policy objects
-            rwPolicy  = RandomWalkPolicy();
-            rhcPolicy = RHCPolicy();
-
-            % Check if DivergentRHCPolicy exists; fall back to RHCPolicy if not
-            if exist('DivergentRHCPolicy', 'class') == 8
-                divPolicy = DivergentRHCPolicy();
-            else
-                divPolicy = rhcPolicy;
+            names = reg.keysFor('policy');
+            for k = 1:numel(names)
+                f = reg.factoryFor('policy', names{k});
+                obj.policyMap(names{k}) = f();
             end
+        end
 
-            % Check if JointRHCPolicy exists; fall back to RHCPolicy if not
-            if exist('JointRHCPolicy', 'class') == 8
-                jointPolicy = JointRHCPolicy();
-            else
-                jointPolicy = rhcPolicy;
-            end
+        function pol = get.policy(obj)
+            pol = obj.policyMap(obj.activePolicy);
+        end
 
-            if exist('JointRHCPolicyN', 'class') == 8
-                jointPolicyN = JointRHCPolicyN();
-            else
-                jointPolicyN = rhcPolicy;
-            end
+        function setPathPlanner(obj, planner)
+            obj.pathPlanner = planner;
+            obj.replanAllEdges();
+        end
 
-            % Map UI Dropdown options to DISTINCT policy objects
-            obj.policyMap('Random Walk')      = rwPolicy;
-            obj.policyMap('Classical RHC [1]') = rhcPolicy;
-            obj.policyMap('Divergent RHC')    = divPolicy;
-            obj.policyMap('Joint RHC')        = jointPolicy;
-            obj.policyMap('Joint RHC N')        = jointPolicyN;
-
-            % Agent type fallbacks
-            obj.policyMap('Default') = rwPolicy;
-            obj.policyMap('Linear')  = rhcPolicy;
-
-            % Optional: map Energy if BatteryEfficientPolicy exists
-            if exist('BatteryEfficientPolicy', 'class') == 8
-                obj.policyMap('Energy') = BatteryEfficientPolicy();
-            else
-                obj.policyMap('Energy') = rhcPolicy;
-            end
+        function setAgentFactory(obj, factory)
+            obj.agentFactory = factory;
         end
 
         function setUncertaintyMode(obj, mode)
@@ -69,21 +61,6 @@ classdef ScenarioModel < handle
         function setActivePolicy(obj, policyName)
             if ischar(policyName) || isstring(policyName)
                 obj.activePolicy = char(policyName);
-            end
-        end
-
-        function pol = getPolicyForAgent(obj, a)
-            % 1. Try resolving using global active policy set by MainUI
-            if obj.policyMap.isKey(obj.activePolicy)
-                pol = obj.policyMap(obj.activePolicy);
-                return;
-            end
-
-            % 2. Fall back to individual agent type property if set
-            if isprop(a, 'type') && obj.policyMap.isKey(a.type)
-                pol = obj.policyMap(a.type);
-            else
-                pol = obj.policyMap('Default');
             end
         end
 
@@ -139,9 +116,8 @@ classdef ScenarioModel < handle
                     continue;
                 end
                 if isempty(a.path)
-                    pol = obj.getPolicyForAgent(a);
                     adj = obj.buildAdjacency();
-                    cmd = pol.plan(a, obj, adj, a.current_target_idx, simTime);
+                    cmd = obj.policy.plan(a, obj, adj, a.current_target_idx, simTime);
                     if ~isempty(cmd) && strcmp(cmd.kind, "move")
                         edge = obj.findEdge(a.current_target_idx, cmd.targetIdx);
                         if ~isempty(edge)
@@ -194,108 +170,7 @@ classdef ScenarioModel < handle
         end
 
         function path = planShortestPath(obj, pStart, pEnd)
-            nodes = [pStart; pEnd];
-            buffer = 1.2;
-            for i = 1:size(obj.walls, 1)
-                w = obj.walls(i, :);
-                p1 = [w(1),w(2)]; p2 = [w(3),w(4)];
-                nodes = [nodes; obj.getBufferedCorners(p1, p2, buffer)];
-            end
-            nNodes = size(nodes, 1);
-            adj = inf(nNodes, nNodes);
-            for i = 1:nNodes
-                for j = i+1:nNodes
-                    if ~obj.isLineBlocked(nodes(i,:), nodes(j,:))
-                        d = norm(nodes(i,:) - nodes(j,:));
-                        adj(i,j) = d; adj(j,i) = d;
-                    end
-                end
-            end
-            pathIndices = obj.dijkstra(adj, 1, 2);
-            rawPath = nodes(pathIndices, :);
-            path = obj.smoothPath(rawPath);
-        end
-
-        function smoothed = smoothPath(obj, path)
-            if size(path, 1) < 3
-                smoothed = path;
-                return;
-            end
-            t = 1:size(path, 1);
-            ts = linspace(1, size(path, 1), size(path, 1) * 10);
-            smoothed = [interp1(t, path(:,1), ts, 'pchip')', ...
-                        interp1(t, path(:,2), ts, 'pchip')'];
-        end
-
-        function pts = getBufferedCorners(obj, p1, p2, dist)
-            dir = (p2 - p1) / (norm(p2 - p1) + eps);
-            perp = [-dir(2), dir(1)];
-            offsets = {dir*dist+perp*dist, dir*dist-perp*dist, -dir*dist+perp*dist, -dir*dist-perp*dist};
-            pts = [p1 + offsets{3}; p1 + offsets{4}; p2 + offsets{1}; p2 + offsets{2}];
-            valid = false(size(pts,1),1);
-            for i = 1:size(pts,1)
-                if ~obj.isPointNearWall(pts(i,:)), valid(i) = true; end
-            end
-            pts = pts(valid, :);
-        end
-
-        function near = isPointNearWall(obj, pt)
-            near = false;
-            for i = 1:size(obj.walls, 1)
-                w = obj.walls(i, :);
-                p1 = [w(1), w(2)]; p2 = [w(3), w(4)];
-                v = p2 - p1; w_vec = pt - p1;
-                c1 = dot(w_vec, v);
-                if c1 <= 0, d = norm(pt - p1);
-                else
-                    c2 = dot(v, v);
-                    if c2 <= c1, d = norm(pt - p2);
-                    else, b = c1 / c2; pb = p1 + b * v; d = norm(pt - pb); end
-                end
-                if d < 0.6, near = true; return; end
-            end
-        end
-
-        function blocked = isLineBlocked(obj, p1, p2)
-            blocked = false;
-            mid = (p1 + p2) / 2;
-            if obj.isPointNearWall(mid), blocked = true; return; end
-            for i = 1:size(obj.walls, 1)
-                w = obj.walls(i, :);
-                if obj.intersectSegments(p1, p2, [w(1),w(2)], [w(3),w(4)])
-                    blocked = true; return;
-                end
-            end
-        end
-
-        function hit = intersectSegments(obj, a, b, c, d)
-            den = (d(2)-c(2))*(b(1)-a(1)) - (d(1)-c(1))*(b(2)-a(2));
-            if abs(den) < 1e-10, hit = false; return; end
-            ua = ((d(1)-c(1))*(a(2)-c(2)) - (d(2)-c(2))*(a(1)-c(1))) / den;
-            ub = ((b(1)-a(1))*(a(2)-c(2)) - (b(2)-a(2))*(a(1)-c(1))) / den;
-            hit = (ua > 0.005 && ua < 0.995 && ub > 0.005 && ub < 0.995);
-        end
-
-        function idxs = dijkstra(obj, adj, startNode, endNode)
-            n = size(adj, 1);
-            dist = inf(1, n); prev = zeros(1, n);
-            dist(startNode) = 0;
-            Q = 1:n;
-            while ~isempty(Q)
-                [~, q_idx] = min(dist(Q));
-                u = Q(q_idx);
-                if u == endNode || isinf(dist(u)), break; end
-                Q(q_idx) = [];
-                for v = 1:n
-                    if isinf(adj(u,v)), continue; end
-                    alt = dist(u) + adj(u,v);
-                    if alt < dist(v), dist(v) = alt; prev(v) = u; end
-                end
-            end
-            idxs = []; curr = endNode;
-            while curr ~= 0
-                idxs = [curr, idxs]; curr = prev(curr);
-            end
+            path = obj.pathPlanner.plan(pStart, pEnd, obj.walls, obj.bounds);
         end
 
 
@@ -314,10 +189,10 @@ classdef ScenarioModel < handle
             for k = 1:size(s.targets, 1)
                 obj.addTarget(s.targets(k,:));
             end
+            if isfield(s, 'walls'), obj.walls = s.walls; end
             for k = 1:size(s.edges, 1)
                 obj.addEdgeByTargets(double(s.edges(k,1)), double(s.edges(k,2)));
             end
-            if isfield(s, 'walls'), obj.walls = s.walls; end
         end
 
         function t = addTarget(obj, pos)
@@ -325,19 +200,11 @@ classdef ScenarioModel < handle
             obj.targets(end+1) = t;
         end
 
-        function [a, ok, msg] = addAgentOnTarget(obj, clickPos, speed, tol, type)
+        function [a, ok, msg] = addAgentOnTarget(obj, clickPos, speed, tol)
             a = []; ok = false; msg = "";
             [tIdx, dist] = obj.findNearestTarget(clickPos);
             if isempty(tIdx) || dist > tol, msg = "Click near target"; return; end
-
-            if nargin > 4 && strcmpi(type, "Energy")
-                a = EnergyAgent(numel(obj.agents)+1, obj.targets(tIdx).position, speed);
-            elseif nargin > 4 && strcmpi(type, "Linear")
-                a = LinearAgent(numel(obj.agents)+1, obj.targets(tIdx).position, speed);
-            else
-                a = DefaultAgent(numel(obj.agents)+1, obj.targets(tIdx).position, speed);
-            end
-
+            a = obj.agentFactory(numel(obj.agents)+1, obj.targets(tIdx).position, speed);
             a.current_target_idx = tIdx;
             a.initialTargetIdx = tIdx;
             a.initialPosition = a.state.pos;
@@ -395,5 +262,6 @@ classdef ScenarioModel < handle
                 if isequal(ids, [t1 t2]) || isequal(ids, [t2 t1]), e = obj.edges(k); return; end
             end
         end
+
     end
 end

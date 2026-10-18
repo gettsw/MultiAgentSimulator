@@ -41,9 +41,7 @@ classdef GraphEditController < handle
             obj.setMode("idle");
         end
 
-        function onCanvasClick(obj, pos, agentSpeed, agentType)
-            % Fallback to "Default" if agentType isn't passed (e.g., legacy calls)
-            if nargin < 4, agentType = "Default"; end
+        function onCanvasClick(obj, pos, agentSpeed)
             
             snappedPos = obj.snapToGrid(pos, obj.gridStep);
             snappedPos = obj.clampToBounds(snappedPos);
@@ -52,8 +50,7 @@ classdef GraphEditController < handle
                     obj.model.addTarget(snappedPos);
                     obj.renderer.renderAll(obj.model);
                 case "addAgent"
-                    % Use the agentType passed dynamically from the UI dropdown selection
-                    [~, ok, msg] = obj.model.addAgentOnTarget(pos, agentSpeed, obj.clickTol, agentType);
+                    [~, ok, msg] = obj.model.addAgentOnTarget(pos, agentSpeed, obj.clickTol);
                     if ~ok && msg ~= ""
                         obj.say(msg);
                         return;

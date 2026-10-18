@@ -9,6 +9,10 @@ classdef MainUI < handle
         endTimeField
         dtField
         timeScaleSlider
+        plannerDropdown
+        policyDropdown
+        agentTypeDropdown
+        registry
         model
         renderer
         controller
@@ -18,18 +22,18 @@ classdef MainUI < handle
         gridStep = 5;
         snapTargets = true;
         frameBuffer = {}       % Accumulated frames for video export
-        agentTypeDropdown
-        policyDropdown
         uncertaintyDropdown % New Dropdown Property
         recordCheckbox      % Frame capture is slow; only record when asked
     end
     
     methods
         function obj = MainUI()
+            obj.registry = ComponentRegistry();
             obj.buildUI();
-            
-            % Instantiate core framework components
-            obj.model = ScenarioModel();
+
+            plannerFactory = obj.registry.factoryFor('pathplanner', obj.plannerDropdown.Value);
+            agentFactory   = obj.registry.factoryFor('agenttype',   obj.agentTypeDropdown.Value);
+            obj.model = ScenarioModel(plannerFactory(), agentFactory);
             obj.renderer = ScenarioRenderer(obj.ax);
             obj.controller = GraphEditController(obj.model, obj.renderer, @(m)obj.setStatus(m));
             obj.objectiveWin = ObjectivePlotWindow();
@@ -38,8 +42,9 @@ classdef MainUI < handle
             obj.sim = SimulationController(obj.model, obj.renderer, obj.clock, ...
                 @(t,tEnd)obj.setTime(t,tEnd), ...
                 @(m)obj.setStatus(m), ...
-                @(t,J)obj.objectiveWin.addPoint(t,J));
-            
+                @(t,J)obj.objectiveWin.addPoint(t,J), ...
+                @(running)obj.onRunStateChanged(running));
+
             % Bind event listeners and initial UI state
             obj.fig.WindowButtonMotionFcn = @(~,~)obj.safeOnMouseMove();
             obj.controller.setMode("idle");
@@ -55,7 +60,7 @@ classdef MainUI < handle
     
     methods (Access = private)
         function buildUI(obj)
-            obj.fig = uifigure('Name','Offline Path Planner UI', ...
+            obj.fig = uifigure('Name','Multi-Agent Persistent Monitoring Simulator', ...
                 'Position', [100 100 1200 780]);
             obj.fig.CloseRequestFcn = @(~,~) obj.forceCloseAll();
 
@@ -63,8 +68,8 @@ classdef MainUI < handle
             main = uigridlayout(obj.fig, [1 2], 'ColumnWidth', {280, '1x'});
             left = uigridlayout(main, [2 1], 'RowHeight', {'fit', 'fit'}, ...
                 'Padding', [0 0 0 0], 'Scrollable', 'on');
-            p  = uigridlayout(uipanel(left, 'Title','Tools'), [12 2], ...
-                'RowHeight', [repmat({'fit'}, 1, 11) {36}], 'ColumnWidth', {'1x', '1x'}, ...
+            p  = uigridlayout(uipanel(left, 'Title','Tools'), [13 2], ...
+                'RowHeight', [repmat({'fit'}, 1, 12) {36}], 'ColumnWidth', {'1x', '1x'}, ...
                 'RowSpacing', 5, 'Padding', [8 6 8 6]);
             tp = uigridlayout(uipanel(left, 'Title','Time Control & Analysis'), [7 4], ...
                 'RowHeight', repmat({'fit'}, 1, 7), 'ColumnWidth', {'fit', '1x', 'fit', '1x'}, ...
@@ -85,7 +90,8 @@ classdef MainUI < handle
             place(uibutton(p,'Text','Add Agent', ...
                 'ButtonPushedFcn', @(~,~)obj.setMode("addAgent")), 2, 1);
             obj.agentTypeDropdown = place(uidropdown(p, ...
-                'Items', {'Default', 'Linear'}, 'Value', 'Default'), 2, 2);
+                'Items', obj.registry.keysFor('agenttype'), 'Value', 'Default Agent', ...
+                'ValueChangedFcn', @(s,~)obj.onAgentTypeChanged(s.Value)), 2, 2);
             place(uibutton(p,'Text','Add Edge', ...
                 'ButtonPushedFcn', @(~,~)obj.setMode("addEdge")), 1, 2);
             place(uibutton(p,'Text','Add Wall', ...
@@ -104,23 +110,28 @@ classdef MainUI < handle
             place(uilabel(p,'Text','Agent Accel:'), 6, 1);
             obj.speedField = place(uieditfield(p,'numeric','Value',15,'Limits',[0.01 Inf]), 6, 2);
 
+            place(uilabel(p,'Text','Path Planner:'), 7, 1);
+            obj.plannerDropdown = place(uidropdown(p, ...
+                'Items', obj.registry.keysFor('pathplanner'), 'Value', 'Dijkstra Corners', ...
+                'ValueChangedFcn', @(s,~)obj.onPlannerChanged(s.Value)), 7, 2);
+
             % Active Policy Selector (full width so long policy names fit)
-            place(uilabel(p,'Text','Active Policy:', 'FontWeight','bold'), 7, [1 2]);
+            place(uilabel(p,'Text','Active Policy:', 'FontWeight','bold'), 8, [1 2]);
             obj.policyDropdown = place(uidropdown(p, ...
-                'Items', {'Random Walk', 'Classical RHC [1]', 'Divergent RHC', 'Joint RHC', 'Joint RHC N'}, ...
+                'Items', obj.registry.keysFor('policy'), ...
                 'Value', 'Random Walk', ...
-                'ValueChangedFcn', @(s,~)obj.onPolicyChanged(s.Value)), 8, [1 2]);
+                'ValueChangedFcn', @(s,~)obj.onPolicyChanged(s.Value)), 9, [1 2]);
 
             % Dynamic vs. Static Uncertainty Selector
-            place(uilabel(p,'Text','Uncertainty:', 'FontWeight','bold'), 9, [1 2]);
+            place(uilabel(p,'Text','Uncertainty:', 'FontWeight','bold'), 10, [1 2]);
             obj.uncertaintyDropdown = place(uidropdown(p, ...
                 'Items', {'Dynamic Uncertainty', 'Static Priority Target', 'Static Uniform'}, ...
                 'Value', 'Dynamic Uncertainty', ...
-                'ValueChangedFcn', @(s,~)obj.onUncertaintyModeChanged(s.Value)), 10, [1 2]);
+                'ValueChangedFcn', @(s,~)obj.onUncertaintyModeChanged(s.Value)), 11, [1 2]);
 
-            obj.modeLabel = place(uilabel(p,'Text','Mode: idle', 'FontWeight','bold'), 11, [1 2]);
+            obj.modeLabel = place(uilabel(p,'Text','Mode: idle', 'FontWeight','bold'), 12, [1 2]);
             obj.statusLabel = place(uilabel(p,'Text','', 'WordWrap','on', ...
-                'VerticalAlignment','top'), 12, [1 2]);
+                'VerticalAlignment','top'), 13, [1 2]);
 
             obj.ax.PickableParts = 'all';
             obj.ax.HitTest = 'on';
@@ -250,6 +261,29 @@ classdef MainUI < handle
             end
         end
         
+        function onPlannerChanged(obj, name)
+            factory = obj.registry.factoryFor('pathplanner', name);
+            obj.model.setPathPlanner(factory());
+            obj.renderer.renderAll(obj.model);
+            obj.setStatus(sprintf('Path planner: %s', name));
+        end
+
+        function onAgentTypeChanged(obj, name)
+            factory = obj.registry.factoryFor('agenttype', name);
+            obj.model.setAgentFactory(factory);
+            obj.setStatus(sprintf('Agent type: %s (applies to new agents)', name));
+        end
+
+        function onRunStateChanged(obj, running)
+            % Lock component choices while a run is in progress
+            state = 'on';
+            if running, state = 'off'; end
+            dds = {obj.plannerDropdown, obj.policyDropdown, obj.agentTypeDropdown, obj.uncertaintyDropdown};
+            for k = 1:numel(dds)
+                if ~isempty(dds{k}) && isvalid(dds{k}), dds{k}.Enable = state; end
+            end
+        end
+
         function forceCloseAll(obj)
             if ~isempty(obj.sim), obj.sim.pause(); end
             delete(timerfindall); 
@@ -310,8 +344,7 @@ classdef MainUI < handle
         
         function onAxesClick(obj, ax)
             cp = ax.CurrentPoint;
-            selectedType = obj.agentTypeDropdown.Value;
-            obj.controller.onCanvasClick([cp(1,1) cp(1,2)], obj.speedField.Value, selectedType);
+            obj.controller.onCanvasClick([cp(1,1) cp(1,2)], obj.speedField.Value);
         end
         
         function safeOnMouseMove(obj)
