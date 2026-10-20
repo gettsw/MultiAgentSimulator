@@ -1,27 +1,12 @@
-classdef EnergyAgent < handle
+classdef EnergyAgent < Agent
+    % Second-order agent (PD path follower) with a battery: power draw from motion, CPU and
+    % sensing, tracked as energy used and state of charge (SOC)
     properties
-        index
-        state              % Instance of KinematicState
-        controller
-
-        path = []
-        pathIndex = 1
-        current_target_idx = []
-        dwellRemaining double = 0
         mode string = "idle"
 
         e_total = 0;
         soc = 1.0;
         battery_percentage = 100;
-
-        color = [0.8 0.2 0.2];
-        size = 8;
-        graphicHandle;
-        textHandle;
-        ax;
-
-        initialPosition;
-        initialTargetIdx;
     end
 
     properties (Constant)
@@ -43,28 +28,20 @@ classdef EnergyAgent < handle
 
     methods
         function obj = EnergyAgent(index, position, maxSpeed)
-            obj.index = index;
-            % Initialize the separated Kinematic State
-            obj.state = KinematicState(position, maxSpeed, 15);
-            % Initialize the separated Controller
-            obj.controller = PathFollowerController();
-
-            obj.initialPosition = position;
+            obj@Agent(index, position, maxSpeed);
+            obj.labelFontSize = 7;
         end
 
         function resetToInitial(obj)
-            obj.state.pos = obj.initialPosition;
-            obj.state.vel = [0 0];
-            obj.state.acc = [0 0];
-            obj.state.ori = 0;
+            resetToInitial@Agent(obj);
             obj.e_total = 0;
             obj.soc = 1.0;
             obj.battery_percentage = 100;
-            obj.path = [];
-            obj.pathIndex = 1;
-            obj.dwellRemaining = 0;
             obj.mode = "idle";
-            obj.current_target_idx = obj.initialTargetIdx;
+        end
+
+        function s = label(obj)
+            s = sprintf('%d\n%.0f%%', obj.index, obj.battery_percentage);
         end
 
         function update(obj, dt)
@@ -82,7 +59,7 @@ classdef EnergyAgent < handle
                 [arrived, aCmd, nextIdx] = obj.controller.computeControl(obj.state, obj.path, obj.pathIndex, dt);
 
                 obj.state.acc = aCmd;
-                obj.pathIndex = nextIdx; 
+                obj.pathIndex = nextIdx;
 
                 if arrived
                     obj.path = [];
@@ -91,7 +68,7 @@ classdef EnergyAgent < handle
             end
 
             PhysicalIntegrator.update(obj.state, dt);
-            if ismethod(obj, 'calculate_energy'), obj.calculate_energy(dt); end
+            obj.calculate_energy(dt);
         end
 
         function calculate_energy(obj, dt)
@@ -114,37 +91,6 @@ classdef EnergyAgent < handle
             Q_joules = obj.BATTERY_E_Wh * 3600;
             obj.soc = obj.soc - (energy_step / Q_joules);
             obj.battery_percentage = max(0, obj.soc * 100);
-        end
-
-        function draw(obj, ax)
-            obj.ax = ax;
-            if ~isempty(obj.graphicHandle) && isvalid(obj.graphicHandle), delete(obj.graphicHandle); end
-            [x, y] = obj.calculateVertices();
-            % Graphics let clicks through to the canvas so a target under an agent stays clickable
-            obj.graphicHandle = patch(ax, x, y, obj.color, 'EdgeColor', 'k', 'FaceAlpha', 0.8, 'PickableParts', 'none');
-
-            labelStr = sprintf('%d\n%.0f%%', obj.index, obj.battery_percentage);
-            obj.textHandle = text(ax, obj.state.pos(1), obj.state.pos(2), labelStr, ...
-                'HorizontalAlignment', 'center', 'FontWeight', 'bold', 'Color', 'w', 'FontSize', 7, ...
-                'PickableParts', 'none');
-        end
-
-        function updateVisuals(obj)
-            if isempty(obj.graphicHandle) || ~isgraphics(obj.graphicHandle), return; end
-            [x, y] = obj.calculateVertices();
-            set(obj.graphicHandle, 'XData', x, 'YData', y);
-            labelStr = sprintf('%d\n%.0f%%', obj.index, obj.battery_percentage);
-            set(obj.textHandle, 'Position', [obj.state.pos(1), obj.state.pos(2), 0], 'String', labelStr);
-        end
-    end
-
-    methods (Access = private)
-        function [x, y] = calculateVertices(obj)
-            h = obj.size * sqrt(3)/2;
-            xb = [obj.size/2, -obj.size/2, -obj.size/2, obj.size/2];
-            yb = [0, h/2, -h/2, 0];
-            x = xb*cos(obj.state.ori) - yb*sin(obj.state.ori) + obj.state.pos(1);
-            y = xb*sin(obj.state.ori) + yb*cos(obj.state.ori) + obj.state.pos(2);
         end
     end
 end

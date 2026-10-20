@@ -149,11 +149,24 @@ obj.policies('My Policy') = @() MyPolicy();
 
 Folder: `Components/AgentTypes/`
 
-Copy `DefaultAgent.m` as a starting template. An agent class must expose:
-- Constructor `MyAgent(index, position, maxSpeed)`
-- `state` property (a `KinematicState`)
-- `path`, `pathIndex`, `current_target_idx`, `dwellRemaining`, `initialPosition`, `initialTargetIdx` properties
-- Methods: `resetToInitial()`, `update(dt)`, `draw(ax)`, `updateVisuals()`
+Subclass `Agent` and implement `update(dt)`:
+
+```matlab
+classdef MyAgent < Agent
+    methods
+        function obj = MyAgent(index, position, maxSpeed)
+            obj@Agent(index, position, maxSpeed);
+        end
+
+        function update(obj, dt)
+            % Move obj.state along obj.path (N x 2 waypoints from the path planner) for dt
+            % seconds; set obj.path = [] once the last waypoint is reached.
+        end
+    end
+end
+```
+
+`Agent` holds the shared state (`state`, a `KinematicState`; `path`; `dwellRemaining`; the start target) and implements `resetToInitial`, `draw`, and `updateVisuals`. Override `resetToInitial` (calling `resetToInitial@Agent(obj)` first) to reset extra state, or `label` to change the text drawn on the agent. `LinearAgent` is the simplest complete example, `DefaultAgent` adds PD control with acceleration limits, and `EnergyAgent` adds a battery. Agents of different types can be mixed in one scenario.
 
 Register it:
 ```matlab
