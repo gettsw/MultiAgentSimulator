@@ -125,7 +125,8 @@ classdef ScenarioModel < handle
                 if isempty(a.path)
                     adj = obj.buildAdjacency();
                     cmd = obj.policy.plan(a, obj, adj, a.current_target_idx, simTime);
-                    if ~isempty(cmd) && strcmp(cmd.kind, "move")
+                    % Policies return struct() (no 'kind') when the agent has nowhere to go
+                    if isfield(cmd, 'kind') && strcmp(cmd.kind, "move")
                         edge = obj.findEdge(a.current_target_idx, cmd.targetIdx);
                         if ~isempty(edge)
                             a.path = edge.curvePoints;
@@ -134,6 +135,10 @@ classdef ScenarioModel < handle
                             end
                             a.pathIndex = 1;
                             a.current_target_idx = cmd.targetIdx;
+                            % A dwell requested in the command (the RHC policies set
+                            % a.dwellRemaining themselves) is spent at the current target
+                            % before leaving, like the RHC dwells
+                            if isfield(cmd, 'dwellSeconds'), a.dwellRemaining = cmd.dwellSeconds; end
                         end
                     end
                 end

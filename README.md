@@ -134,11 +134,13 @@ classdef MyPolicy < handle
             if isempty(nbrs), return; end
             cmd.kind = "move";
             cmd.targetIdx = nbrs(1);          % index of the target to move to
-            cmd.dwellSeconds = 0.5;           % optional dwell after arrival
+            cmd.dwellSeconds = 0.5;           % optional: wait at the current target before leaving
         end
     end
 end
 ```
+
+Returning `struct()` (no `kind`) leaves the agent where it is; it asks again on the next step. Instead of `dwellSeconds`, a policy may set `agent.dwellRemaining` itself, as the RHC policies do.
 
 Register it:
 ```matlab
