@@ -1,6 +1,6 @@
 classdef guiTest < matlab.uitest.TestCase
     % Drives the real MainUI with the App Testing Framework (needs a display; windows open
-    % and close on screen while it runs). Run from the repo root:
+    % and close on a secondary monitor if there is one). Run from the repo root:
     %   matlab -batch "addpath(genpath(pwd)); assertSuccess(runtests('guiTest'))"
     % Screenshots go to results/gui/ (git-ignored). File dialogs are bypassed by calling
     % MainUI.loadLayout/saveLayout and ScenarioRenderer.loadBackgroundImage with a path.
@@ -17,7 +17,7 @@ classdef guiTest < matlab.uitest.TestCase
             tc.outDir = fullfile(tc.root, 'results', 'gui');
             if ~isfolder(tc.outDir), mkdir(tc.outDir); end
             rng(0);
-            tc.ui = MainUI();
+            tc.ui = MainUI('Monitor', secondaryMonitor());
             tc.addTeardown(@() closeUI(tc.ui));
         end
     end
@@ -27,6 +27,18 @@ classdef guiTest < matlab.uitest.TestCase
             tc.verifyEqual(tc.ui.uncertaintyDropdown.Value, 'Static Uniform');
             tc.verifyEqual(tc.ui.model.uncertaintyMode, 'Static Uniform');
             tc.verifyNotEmpty(findall(tc.ui.fig, 'Type', 'uilabel', 'Text', 'Agent Speed:'));
+        end
+
+        function opensOnRequestedMonitor(tc)
+            mons = get(groot, 'MonitorPositions');
+            m = mons(secondaryMonitor(), :);
+            drawnow;
+            for f = [tc.ui.fig, tc.ui.objectiveWin.fig]
+                p = f.Position;
+                tc.verifyTrue(p(1) >= m(1) && p(1) + p(3) <= m(1) + m(3) && p(2) >= m(2) ...
+                    && p(2) + p(4) <= m(2) + m(4), ...
+                    sprintf('"%s" at %s lies on monitor %s', f.Name, mat2str(p), mat2str(m)));
+            end
         end
 
         function loadsReportLayoutAndRunsToEnd(tc)
@@ -46,6 +58,11 @@ classdef guiTest < matlab.uitest.TestCase
             J = tc.ui.objectiveWin.currentLine.YData;
             tc.verifyTrue(any(isfinite(J)) && all(J(isfinite(J)) >= 0), 'objective plotted');
             tc.verifyEqual(char(tc.ui.policyDropdown.Enable), 'on', 'dropdowns unlocked after the run');
+            heights = arrayfun(@(t) t.barHandle.Position(4), m.targets);
+            fullHeights = arrayfun(@(t) t.barFrameHandle.Position(4), m.targets);
+            tc.verifyLessThanOrEqual(nnz(heights >= fullHeights - 1e-9), 1, 'at most the most uncertain bar is full');
+            tops = arrayfun(@(t) sum(t.barFrameHandle.Position([2 4])), m.targets);
+            tc.verifyLessThanOrEqual(max(tops), 100, 'bars stay inside the canvas');
             snap(tc, 'report_layout_after_60s');
         end
 
@@ -97,8 +114,11 @@ classdef guiTest < matlab.uitest.TestCase
             tc.press(button(tc, 'Add Agent'));
             tc.press(tc.ui.ax, [20 80]);
             tc.verifyEqual(numel(tc.ui.model.agents), 1, 'agent added by clicking a target dot');
+            tc.choose(tc.ui.agentTypeDropdown, 'Energy Agent');
             tc.press(tc.ui.ax, [20 80]);
             tc.verifyEqual(numel(tc.ui.model.agents), 2, 'second agent added by clicking the agent on that target');
+            tc.verifyEqual(arrayfun(@(a) string(class(a)), tc.ui.model.agents), ["DefaultAgent", "EnergyAgent"], ...
+                'agent types can be mixed');
 
             tc.press(button(tc, 'Add Wall'));
             tc.press(tc.ui.ax, [45 45]);
@@ -111,6 +131,16 @@ classdef guiTest < matlab.uitest.TestCase
             tc.press(tc.ui.ax, [60 60]);
             tc.verifyEqual(size(tc.ui.model.walls, 1), 2, 'wall started on top of an existing wall');
             snap(tc, 'built_by_clicking');
+        end
+
+        function runsAgentOnTargetWithoutEdges(tc)
+            tc.press(button(tc, 'Add Target'));
+            tc.press(tc.ui.ax, [50 50]);
+            tc.press(button(tc, 'Add Agent'));
+            tc.press(tc.ui.ax, [50 50]);
+            tc.type(tc.ui.endTimeField, 5);
+            tc.press(button(tc, 'Run to End'));
+            tc.verifyEqual(tc.ui.clock.currentTime, 5, 'AbsTol', 1e-9, 'run finished without error');
         end
 
         function addsTargetsOverBackgroundImage(tc)
@@ -133,6 +163,14 @@ classdef guiTest < matlab.uitest.TestCase
             exportapp(tc.ui.objectiveWin.fig, fullfile(tc.outDir, [name '_objective.png']));
         end
     end
+end
+
+function k = secondaryMonitor()
+% A monitor other than the primary one (whose origin is [1 1]), so test windows stay off the
+% main screen; 1 when there is only one monitor
+mons = get(groot, 'MonitorPositions');
+k = find(mons(:, 1) ~= 1 | mons(:, 2) ~= 1, 1);
+if isempty(k), k = 1; end
 end
 
 function closeUI(ui)

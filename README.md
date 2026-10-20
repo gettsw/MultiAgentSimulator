@@ -37,7 +37,8 @@ The objective function `J(t)` tracked over the course of a run.
    ```matlab
    runMainUI
    ```
-   This adds all subfolders to the path and opens the UI.
+   This adds all subfolders to the path and opens the UI. `runMainUI('Monitor', 2)` opens the windows on
+   another monitor (a row of `get(groot, 'MonitorPositions')`), sized to fit it.
 3. Use the dropdowns in the **Tools** panel to pick a Path Planner, Agent Policy, Agent Type, and Uncertainty mode. These can only be changed while the simulation is **not** running.
 4. Use the **Tools** panel to add targets, agents, edges, and walls (**Agent Speed** sets the maximum speed of the next agents you place). Use the **Time Control** panel to play/pause the simulation.
 
@@ -84,7 +85,7 @@ matlab -batch "addpath(genpath(pwd)); smokeTest"
 ```
 `tests/smokeTest.m` checks the defaults and the layout file round trip, then runs every registered policy x path planner x agent type for 20 s on `ReportLayout.mat` and checks that each run finishes with a finite objective `J`. It prints one line per check and exits with an error if any check fails (about 20 s). New components registered in `ComponentRegistry` are picked up automatically.
 
-`tests/guiTest.m` drives the real GUI with MATLAB's App Testing Framework: it loads `ReportLayout.mat` over the lab background and runs to the end, plays, pauses and resets, saves, clears and reloads a layout, and builds a small scenario by clicking. It needs a display; the windows open and close on screen while it runs (about 45 s):
+`tests/guiTest.m` drives the real GUI with MATLAB's App Testing Framework: it loads `ReportLayout.mat` over the lab background and runs to the end, plays, pauses and resets, saves, clears and reloads a layout, and builds a small scenario by clicking. It needs a display; the windows open on a secondary monitor if there is one and close when it finishes (about 50 s):
 ```
 matlab -batch "addpath(genpath(pwd)); assertSuccess(runtests('guiTest'))"
 ```
