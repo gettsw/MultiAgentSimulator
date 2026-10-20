@@ -2,7 +2,7 @@ function out = runTrial(params)
 % One headless simulation run. Returns metrics plus the policy object (for its stats).
 % Called by runSweep (grids of trials), the diagnostic scripts, and the paper experiments
 % (Experiments/paper). Parameters: see trialDefaults. With params.Log = true the output also
-% holds out.log (per-step time, J(t), agent states, SOC and energy) and out.metrics
+% holds out.log (per-step time, J(t), target uncertainties R, agent states, SOC and energy) and out.metrics
 % (trialMetrics: path length, heading change, acceleration cost, final SOC per agent).
 
 p = withDefaults(params);
@@ -68,14 +68,17 @@ clock = SimulationClock(p.EndTime, p.Dt);
 n = ceil(p.EndTime / p.Dt) + 1;
 tLog = zeros(n, 1); jLog = zeros(n, 1);
 logOn = isfield(p, 'Log') && p.Log;
-if logOn, L = emptyLog(n, numel(model.agents)); end
+if logOn, L = emptyLog(n, numel(model.agents), nT); end
 peakR = 0; coLocationTime = 0; k = 0;
 while ~clock.isFinished()
     dt = clock.tick();
     model.step(dt, clock.currentTime);
     [~, J] = model.updateTargetsAndLogObjective(clock.currentTime, dt);
     k = k + 1; tLog(k) = clock.currentTime; jLog(k) = J;
-    if logOn, L = logAgents(L, k, model.agents); end
+    if logOn
+        L = logAgents(L, k, model.agents);
+        L.R(k, :) = [model.targets.R];
+    end
     peakR = max([peakR, model.targets.R]);
     if any(arrayfun(@(tg) numel(tg.residingAgents) > 1, model.targets))
         coLocationTime = coLocationTime + dt;
@@ -93,7 +96,7 @@ slopeJ = c(1);
 out = struct('finalJ', finalJ, 'steadyJ', steadyJ, 'slopeJ', slopeJ, ...
     'peakR', peakR, 'coLocationTime', coLocationTime, 'policy', pol);
 if logOn
-    for name = ["pos", "vel", "acc", "ori", "soc", "energy"]
+    for name = ["pos", "vel", "acc", "ori", "soc", "energy", "R"]
         L.(name) = L.(name)(1:k, :, :);
     end
     L.t = tLog; L.J = jLog; L.dt = p.Dt; L.starts = starts;
@@ -102,10 +105,11 @@ if logOn
 end
 end
 
-function L = emptyLog(n, nA)
-% Per-step agent states: pos/vel/acc are n x nA x 2, the rest n x nA (NaN if the type has none)
+function L = emptyLog(n, nA, nT)
+% Per-step states: agent pos/vel/acc are n x nA x 2, agent ori/soc/energy n x nA (NaN if the type
+% has none), target uncertainties R n x nT
 L = struct('pos', zeros(n, nA, 2), 'vel', zeros(n, nA, 2), 'acc', zeros(n, nA, 2), ...
-    'ori', zeros(n, nA), 'soc', nan(n, nA), 'energy', nan(n, nA));
+    'ori', zeros(n, nA), 'soc', nan(n, nA), 'energy', nan(n, nA), 'R', zeros(n, nT));
 end
 
 function L = logAgents(L, k, agents)
