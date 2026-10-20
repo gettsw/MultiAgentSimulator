@@ -14,10 +14,14 @@ classdef ScenarioRenderer < handle
             hold(obj.ax, 'off');
         end
 
-        function loadBackgroundImage(obj)
-            [file, path] = uigetfile({'*.jpg;*.png;*.bmp;*.tif', 'Image Files (*.jpg, *.png, *.bmp, *.tif)'});
-            if isequal(file, 0), return; end
-            img = imread(fullfile(path, file));
+        function loadBackgroundImage(obj, file)
+            % Asks for the image file unless one is given
+            if nargin < 2
+                [f, d] = uigetfile({'*.jpg;*.png;*.bmp;*.tif', 'Image Files (*.jpg, *.png, *.bmp, *.tif)'});
+                if isequal(f, 0), return; end
+                file = fullfile(d, f);
+            end
+            img = imread(file);
             img = flipud(img);
             if ~isempty(obj.bgImageHandle) && isgraphics(obj.bgImageHandle)
                 delete(obj.bgImageHandle);
@@ -79,7 +83,7 @@ classdef ScenarioRenderer < handle
             for i = 1:size(model.walls, 1)
                 w = model.walls(i, :);
                 line(obj.ax, [w(1) w(3)], [w(2) w(4)], ...
-                    'Color', [0.2 0.2 0.2], 'LineWidth', 4, 'Tag', 'Wall');
+                    'Color', [0.2 0.2 0.2], 'LineWidth', 4, 'Tag', 'Wall', 'PickableParts', 'none');
             end
             hold(obj.ax, 'off');
         end

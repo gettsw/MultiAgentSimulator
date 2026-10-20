@@ -84,6 +84,12 @@ matlab -batch "addpath(genpath(pwd)); smokeTest"
 ```
 `tests/smokeTest.m` checks the defaults and the layout file round trip, then runs every registered policy x path planner x agent type for 20 s on `ReportLayout.mat` and checks that each run finishes with a finite objective `J`. It prints one line per check and exits with an error if any check fails (about 20 s). New components registered in `ComponentRegistry` are picked up automatically.
 
+`tests/guiTest.m` drives the real GUI with MATLAB's App Testing Framework: it loads `ReportLayout.mat` over the lab background and runs to the end, plays, pauses and resets, saves, clears and reloads a layout, and builds a small scenario by clicking. It needs a display; the windows open and close on screen while it runs (about 45 s):
+```
+matlab -batch "addpath(genpath(pwd)); assertSuccess(runtests('guiTest'))"
+```
+Screenshots of each stage are written to `results/gui/` (git-ignored).
+
 ## Adding a new modular class
 
 Each area has a dedicated folder under `Components/`. Creating a new algorithm takes two steps:

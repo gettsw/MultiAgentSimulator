@@ -60,9 +60,11 @@ classdef DefaultAgent < handle
             obj.ax = ax;
             if ~isempty(obj.graphicHandle) && isvalid(obj.graphicHandle), delete(obj.graphicHandle); end
             [x, y] = obj.calculateVertices();
-            obj.graphicHandle = patch(ax, x, y, obj.color, 'EdgeColor', 'k', 'FaceAlpha', 0.8);
+            % Graphics let clicks through to the canvas so a target under an agent stays clickable
+            obj.graphicHandle = patch(ax, x, y, obj.color, 'EdgeColor', 'k', 'FaceAlpha', 0.8, 'PickableParts', 'none');
             obj.textHandle = text(ax, obj.state.pos(1), obj.state.pos(2), num2str(obj.index), ...
-                'HorizontalAlignment', 'center', 'FontWeight', 'bold', 'Color', 'w', 'FontSize', 8);
+                'HorizontalAlignment', 'center', 'FontWeight', 'bold', 'Color', 'w', 'FontSize', 8, ...
+                'PickableParts', 'none');
         end
 
         function updateVisuals(obj)

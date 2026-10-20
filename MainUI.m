@@ -56,8 +56,25 @@ classdef MainUI < handle
             obj.renderer.renderAll(obj.model);
             obj.setTime(0, obj.clock.endTime);
         end
+
+        % File I/O behind the Save/Load Layout buttons, callable without the file dialogs
+        function saveLayout(obj, file)
+            s = obj.model.exportLayout();
+            save(file, 's');
+        end
+
+        function loadLayout(obj, file)
+            tmp = load(file, 's');
+            obj.model.importLayout(tmp.s);
+            % The layout may carry its uncertainty mode and agents; show them in the controls
+            obj.uncertaintyDropdown.Value = obj.model.uncertaintyMode;
+            if ~isempty(obj.model.agents), obj.speedField.Value = obj.model.agents(1).state.maxSpeed; end
+            obj.renderer.clearAxes();
+            obj.renderer.renderAll(obj.model);
+            obj.onResetSimulation();
+        end
     end
-    
+
     methods (Access = private)
         function buildUI(obj)
             obj.fig = uifigure('Name','Multi-Agent Persistent Monitoring Simulator', ...
@@ -294,25 +311,17 @@ classdef MainUI < handle
         end
         
         function onSaveLayout(obj)
-            s = obj.model.exportLayout();
             [f,d] = uiputfile('*.mat','Save layout');
             if isequal(f,0), return; end
-            save(fullfile(d,f), 's');
+            obj.saveLayout(fullfile(d,f));
         end
-        
+
         function onLoadLayout(obj)
             [f,d] = uigetfile('*.mat','Load layout');
             if isequal(f,0), return; end
-            tmp = load(fullfile(d,f), 's');
-            obj.model.importLayout(tmp.s);
-            % The layout may carry its uncertainty mode and agents; show them in the controls
-            obj.uncertaintyDropdown.Value = obj.model.uncertaintyMode;
-            if ~isempty(obj.model.agents), obj.speedField.Value = obj.model.agents(1).state.maxSpeed; end
-            obj.renderer.clearAxes();
-            obj.renderer.renderAll(obj.model);
-            obj.onResetSimulation();
+            obj.loadLayout(fullfile(d,f));
         end
-        
+
         function onClearAll(obj)
             if ~isempty(obj.sim), obj.sim.pause(); end
             obj.controller.clearAll();
