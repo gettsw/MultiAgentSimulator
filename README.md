@@ -104,6 +104,20 @@ Screenshots of each stage are written to `results/gui/` (git-ignored).
 
 `Experiments/validation/validateEDRHC` compares both policies with the legacy JavaScript simulator on its presets (`Configurations/Legacy/`).
 
+### Energy-aware ED-RHC (ED-ORHC)
+
+`ED-ORHC SO` and `ED-ORHC FO-3` (the same `EDRHCPolicy` with `transit = "SO"` or `"FO-3"`) implement the energy-aware variant of S. Welikala and C. G. Cassandras, "Event-driven receding horizon control of energy-aware dynamic agents for distributed persistent monitoring", arXiv 2102.12963 (IEEE CDC 2021). Use them with the **Second-Order Agent**.
+
+- **Objective.** `J_T = energyWeight * J_e + J_s`, where `J_e` is the integral of the squared tangential acceleration `u(t)^2` over all agents and `J_s` is the usual sensing objective. The default `energyWeight = 7.68e-3` is the paper's `213.3e-6` (600 x 600 space) rescaled to the 100 x 100 canvas. Energy grows with length squared, so the factor is 36.
+- **Transit time as a decision.** Events, locality, covering and RHC-alpha are as in ED-RHC. Each RHCP also chooses the transit time `rho_ij` and adds the energy `E(rho)` of the speed profile: `12 y^2/rho^3` for SO (Theorem 3) and `27 y^2/(2 rho^3)` for FO-3 (Theorem 5). In RHCP3 the alpha-weighted sensing cost is doubled, so that `alpha = 0.5` gives the paper's objective.
+- **Second-Order Agent** (`Components/AgentTypes/SecondOrderAgent.m`) follows its path by arc length. It uses the SO speed profile `v(t) = 6 y t (rho - t)/rho^3`, or the FO-3 trapezoid (accelerate for `rho/3`, cruise, brake for `rho/3`), over the transit time the policy hands it. It starts and stops at rest and stays still while dwelling. It accumulates `J_e` exactly and keeps the Energy Agent battery model as a reported SOC.
+  - Without a planned transit time, the agent uses the SO profile with peak speed `maxSpeed`.
+  - Under `ED-RHC-alpha` it runs each fixed transit `y/maxSpeed` with the SO profile, which is the JS simulator's SO#.
+- **Metrics.** With Second-Order Agents, `runTrial` also returns `out.Je`, `out.JT`, `out.vmax` and `out.umax` (paper eqs. 3 and 73), and `out.log.Je` holds the per-step energy.
+- **`clearFirst`** (default `false`, which follows the paper). Set it to `true` for the JS simulator's energy-aware convention: every visit clears the target, there is no RHCP1 on arrival, and plans only include visits that clear `j`.
+
+`Experiments/validation/validateEDORHC` compares both methods with the JS simulator (methods 9 and 11) under the JS conventions.
+
 ## Headless experiments
 
 `Experiments/runTrial(params)` runs one simulation without the GUI. Unset parameters take the values in `Experiments/trialDefaults.m`; component parameters take any `ComponentRegistry` name:
@@ -117,7 +131,7 @@ out = runTrial(struct('Layout', "ReportLayout.mat", 'AgentStarts', "layout", ...
 - `AgentStarts`: `"auto"` (spread evenly), `"layout"` (the start targets stored in the layout file), or target indices such as `[1 5]`.
 - `Seed`: the `rng` seed set before simulating (`-1`, the default, leaves `rng` as it is).
 - `Policy_<property>`: sets a property of the active policy, e.g. `'Policy_dwellRange', [0 0]` turns off the Random Walk or Battery Efficient dwell.
-- `Log = true`: `out.log` holds the per-step time, `J(t)`, agent positions, velocities, accelerations, headings, SOC and energy; `out.metrics` holds per-agent path length `L`, heading change `Θ`, integrated squared acceleration `E_a`, final SOC and energy (`Experiments/metrics/`).
+- `Log = true`: `out.log` holds the per-step time, `J(t)`, agent positions, velocities, accelerations, headings, SOC, battery energy and `J_e` (Second-Order Agents); `out.metrics` holds per-agent path length `L`, heading change `Θ`, integrated squared acceleration `E_a`, final SOC and energy (`Experiments/metrics/`).
 
 `Experiments/runSweep(grid)` runs every combination of parameter values, and `analyzeResults` compares the variants.
 

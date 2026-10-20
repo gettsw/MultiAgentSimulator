@@ -3,7 +3,8 @@ function out = runTrial(params)
 % Called by runSweep (grids of trials), the diagnostic scripts, and the paper experiments
 % (Experiments/paper). Parameters: see trialDefaults. With params.Log = true the output also
 % holds out.log (per-step time, J(t), target uncertainties R, agent states, SOC and energy) and out.metrics
-% (trialMetrics: path length, heading change, acceleration cost, final SOC per agent).
+% (trialMetrics: path length, heading change, acceleration cost, final SOC per agent). With
+% SecondOrderAgents out also holds the energy-aware RHC metrics Je, JT, vmax and umax.
 
 p = withDefaults(params);
 root = fileparts(fileparts(mfilename('fullpath')));
@@ -96,8 +97,17 @@ slopeJ = c(1);
 
 out = struct('finalJ', finalJ, 'steadyJ', steadyJ, 'slopeJ', slopeJ, ...
     'peakR', peakR, 'coLocationTime', coLocationTime, 'policy', pol);
+% Energy-aware RHC metrics (paper eqs. 3 and 73), from agents that track int u^2 dt
+% (SecondOrderAgent); NaN otherwise. Js = finalJ; JT = energyWeight * Je + Js.
+out.Je = NaN; out.JT = NaN; out.vmax = NaN; out.umax = NaN;
+if ~isempty(model.agents) && all(arrayfun(@(a) isprop(a, 'Je'), model.agents))
+    out.Je = sum([model.agents.Je]);
+    out.vmax = max([model.agents.peakSpeed]);
+    out.umax = max([model.agents.peakAccel]);
+    if isprop(pol, 'energyWeight'), out.JT = pol.energyWeight * out.Je + finalJ; end
+end
 if logOn
-    for name = ["pos", "vel", "acc", "ori", "soc", "energy", "R"]
+    for name = ["pos", "vel", "acc", "ori", "soc", "energy", "Je", "R"]
         L.(name) = L.(name)(1:k, :, :);
     end
     L.t = tLog; L.J = jLog; L.dt = p.Dt; L.starts = starts;
@@ -107,10 +117,10 @@ end
 end
 
 function L = emptyLog(n, nA, nT)
-% Per-step states: agent pos/vel/acc are n x nA x 2, agent ori/soc/energy n x nA (NaN if the type
-% has none), target uncertainties R n x nT
+% Per-step states: agent pos/vel/acc are n x nA x 2, agent ori/soc/energy/Je n x nA (NaN if the
+% type has none), target uncertainties R n x nT
 L = struct('pos', zeros(n, nA, 2), 'vel', zeros(n, nA, 2), 'acc', zeros(n, nA, 2), ...
-    'ori', zeros(n, nA), 'soc', nan(n, nA), 'energy', nan(n, nA), 'R', zeros(n, nT));
+    'ori', zeros(n, nA), 'soc', nan(n, nA), 'energy', nan(n, nA), 'Je', nan(n, nA), 'R', zeros(n, nT));
 end
 
 function L = logAgents(L, k, agents)
@@ -121,6 +131,7 @@ for a = 1:numel(agents)
         L.soc(k, a) = agents(a).soc;
         L.energy(k, a) = agents(a).e_total;
     end
+    if isprop(agents(a), 'Je'), L.Je(k, a) = agents(a).Je; end
 end
 end
 
