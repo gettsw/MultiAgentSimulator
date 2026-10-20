@@ -9,7 +9,8 @@ function smokeTest()
 %    scenario (Configurations/ReportLayout.mat, 5 agents) without error, with a finite J,
 %    finite agent positions, R >= 0, and at least one agent leaving its start target.
 % 4. Edge cases: a team mixing all agent types and an agent on a target with no edges, under
-%    every policy; Random Walk / Battery Efficient dwell (cmd.dwellSeconds is honoured).
+%    every policy; Random Walk / Battery Efficient dwell (cmd.dwellSeconds is honoured);
+%    runTrial with the paper preset (Experiments/paper/paperDefaults).
 % Prints one line per check and errors at the end (non-zero exit under -batch) if any failed.
 
 root = fileparts(fileparts(mfilename('fullpath')));
@@ -77,6 +78,17 @@ end
 for i = 1:numel(policies)
     [ok, detail] = runScenario(@isolatedTarget, policies{i}, 2, false);
     check(ok, sprintf('%-18s agent on a target with no edges  %s', policies{i}, detail));
+end
+try
+    p = paperDefaults();
+    p.EndTime = 5;
+    out = runTrial(p);
+    m = out.metrics;
+    check(numel(m.L) == 5 && isequal(out.log.starts, layout.agentStarts) && all(isfinite([m.L m.Theta m.Ea])) ...
+        && size(out.log.pos, 1) == numel(out.log.t), ...
+        'runTrial: paper preset, starts from the layout, logged metrics');
+catch err
+    check(false, "runTrial: paper preset  ERROR " + err.message);
 end
 for name = ["Random Walk", "Battery Efficient"]
     [~, ~, dwelled] = runScenario(@() reportScenario('Dijkstra Corners', {'Default Agent'}), name, 20, true);

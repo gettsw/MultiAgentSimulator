@@ -81,6 +81,16 @@ classdef MainUI < handle
         end
     end
 
+    methods (Static)
+        function k = secondaryMonitor()
+            % A monitor other than the primary one (whose origin is [1 1]), for windows opened by
+            % scripts and tests; 1 when there is only one monitor
+            mons = get(groot, 'MonitorPositions');
+            k = find(mons(:, 1) ~= 1 | mons(:, 2) ~= 1, 1);
+            if isempty(k), k = 1; end
+        end
+    end
+
     methods (Static, Access = private)
         function [mainPos, objPos] = windowPositions(monitor)
             % Default spots on the primary monitor, or fitted onto the given monitor: main window
