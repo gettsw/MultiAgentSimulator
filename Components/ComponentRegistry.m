@@ -20,6 +20,8 @@ classdef ComponentRegistry < handle
             obj.policies('Divergent RHC')     = @() DivergentRHCPolicy();
             obj.policies('Joint RHC')         = @() JointRHCPolicy();
             obj.policies('Joint RHC N')       = @() JointRHCPolicyN();
+            obj.policies('ED-RHC')            = @() EDRHCPolicy(Alpha=0.5);
+            obj.policies('ED-RHC-alpha')      = @() EDRHCPolicy();
 
             obj.agentTypes = containers.Map('KeyType','char','ValueType','any');
             obj.agentTypes('Default Agent') = @(idx, pos, sp) DefaultAgent(idx, pos, sp);
