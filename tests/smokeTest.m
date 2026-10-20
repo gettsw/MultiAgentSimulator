@@ -8,6 +8,8 @@ function smokeTest()
 % 3. Every registered policy x path planner x agent type runs 20 s on the paper's reference
 %    scenario (Configurations/ReportLayout.mat, 5 agents) without error, with a finite J,
 %    finite agent positions, R >= 0, and at least one agent leaving its start target.
+% 4. Edge cases: a team mixing all agent types and an agent on a target with no edges, under
+%    every policy; Random Walk / Battery Efficient dwell (cmd.dwellSeconds is honoured).
 % Prints one line per check and errors at the end (non-zero exit under -batch) if any failed.
 
 root = fileparts(fileparts(mfilename('fullpath')));
@@ -21,6 +23,8 @@ model = ScenarioModel();
 tgt = Target(2, [0 0]);
 check(strcmp(model.uncertaintyMode, 'Static Uniform') && tgt.A_uniformBase == 1 ...
     && tgt.B == 10 && tgt.R == 0, 'defaults: Static Uniform, A = 1, B = 10, R(0) = 0');
+check(tgt.A_spike - tgt.B > 0 && tgt.A_spike - 2*tgt.B < 0, ...
+    'spike mode: one agent cannot bring a spiking target down, two can');
 check(strcmp(layout.uncertaintyMode, 'Static Uniform') && all(layout.A == 1) ...
     && all(layout.B == 10) && all(layout.R0 == 0), 'ReportLayout.mat: Static Uniform, A = 1, B = 10, R(0) = 0');
 
@@ -59,10 +63,24 @@ for i = 1:numel(policies)
     for j = 1:numel(planners)
         for k = 1:numel(types)
             name = sprintf('%-18s %-17s %-14s', policies{i}, planners{j}, types{k});
-            [ok, detail] = runCombo(policies{i}, planners{j}, types{k});
+            [ok, detail] = runScenario(@() reportScenario(planners{j}, types(k)), policies{i}, 20, true);
             check(ok, name + "  " + detail);
         end
     end
+end
+
+% ---- 4. Edge cases ----
+for i = 1:numel(policies)
+    [ok, detail] = runScenario(@() reportScenario('Dijkstra Corners', types), policies{i}, 20, true);
+    check(ok, sprintf('%-18s mixed team (%s)  %s', policies{i}, strjoin(types, ', '), detail));
+end
+for i = 1:numel(policies)
+    [ok, detail] = runScenario(@isolatedTarget, policies{i}, 2, false);
+    check(ok, sprintf('%-18s agent on a target with no edges  %s', policies{i}, detail));
+end
+for name = ["Random Walk", "Battery Efficient"]
+    [~, ~, dwelled] = runScenario(@() reportScenario('Dijkstra Corners', {'Default Agent'}), name, 20, true);
+    check(dwelled, name + " agents dwell at targets (cmd.dwellSeconds)");
 end
 
 if isempty(failures)
@@ -82,30 +100,51 @@ end
         end
     end
 
-    function [ok, detail] = runCombo(policyName, plannerName, typeName)
+    function [ok, detail, dwelled] = runScenario(build, policyName, T, mustMove)
+        % Runs the model from build() for T seconds under the policy; dwelled reports whether
+        % any agent waited at a target
         rng(0);   % Random Walk / Battery Efficient dwell draws
+        dwelled = false;
         try
-            plannerFactory = reg.factoryFor('pathplanner', plannerName);
-            sim = ScenarioModel(plannerFactory(), reg.factoryFor('agenttype', typeName));
-            sim.importLayout(layout);
+            sim = build();
             sim.setActivePolicy(policyName);
             sim.resetSimulationState();
-            clock = SimulationClock(20, 0.05);
+            clock = SimulationClock(T, 0.05);
             J = NaN;
             while ~clock.isFinished()
                 dt = clock.tick();
                 sim.step(dt, clock.currentTime);
                 [~, J] = sim.updateTargetsAndLogObjective(clock.currentTime, dt);
+                dwelled = dwelled || any([sim.agents.dwellRemaining] > 0);
             end
             pos = cell2mat(arrayfun(@(a) a.state.pos, sim.agents(:), 'UniformOutput', false));
             starts = cell2mat(arrayfun(@(a) a.initialPosition(:)', sim.agents(:), 'UniformOutput', false));
             moved = any(vecnorm(pos - starts, 2, 2) > 1);
-            ok = isfinite(J) && all(isfinite(pos(:))) && all([sim.targets.R] >= 0) && moved;
-            detail = sprintf('J(20 s) = %.2f', J);
-            if ~moved, detail = detail + "  (no agent left its start)"; end
+            ok = isfinite(J) && all(isfinite(pos(:))) && all([sim.targets.R] >= 0) && (moved || ~mustMove);
+            detail = sprintf('J(%g s) = %.2f', T, J);
+            if mustMove && ~moved, detail = detail + "  (no agent left its start)"; end
         catch err
             ok = false;
             detail = sprintf('ERROR %s (%s, line %d)', err.message, err.stack(1).name, err.stack(1).line);
         end
     end
+
+    function sim = reportScenario(plannerName, typeNames)
+        % ReportLayout.mat; agent k gets type typeNames{k} (cycling through the list)
+        plannerFactory = reg.factoryFor('pathplanner', plannerName);
+        sim = ScenarioModel(plannerFactory());
+        noAgents = layout;
+        noAgents.agentStarts = [];
+        sim.importLayout(noAgents);
+        for a = 1:numel(layout.agentStarts)
+            sim.setAgentFactory(reg.factoryFor('agenttype', typeNames{mod(a - 1, numel(typeNames)) + 1}));
+            sim.addAgentOnTarget(sim.targets(layout.agentStarts(a)).position, layout.agentSpeed(a), 1e-6);
+        end
+    end
+end
+
+function sim = isolatedTarget()
+% One agent on a target with no edges, plus a second, unconnected target
+sim = ScenarioModel();
+sim.importLayout(struct('targets', [10 10; 50 50], 'edges', zeros(0, 2), 'agentStarts', 1));
 end
