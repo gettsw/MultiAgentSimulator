@@ -80,7 +80,8 @@ if iscell(x), c = x(:)'; else, c = num2cell(x); end
 end
 
 function m = metricsOnly(out)
-m = rmfield(out, 'policy');   % keep rows small (and parfor-transferable)
+% keep rows small (and parfor-transferable): no policy object, per-step log or nested metrics
+m = rmfield(out, intersect({'policy', 'log', 'metrics'}, fieldnames(out)));
 end
 
 function s = mergeStructs(a, b)
