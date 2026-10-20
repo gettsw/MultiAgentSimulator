@@ -23,7 +23,11 @@ classdef ComponentRegistry < handle
             obj.policies('ED-RHC')            = @() EDRHCPolicy(Alpha=0.5);
             obj.policies('ED-RHC-alpha')      = @() EDRHCPolicy();
             obj.policies('ED-ORHC SO')        = @() EDRHCPolicy(Transit="SO");
-            obj.policies('ED-ORHC FO-3')      = @() EDRHCPolicy(Transit="FO-3");
+            obj.policies('ED-ORHC FO')        = @() EDRHCPolicy(Transit="FO");
+            obj.policies('ED-ORHC SO-V')      = @() EDRHCPolicy(Transit="SO-V");
+            obj.policies('ED-ORHC SO-A')      = @() EDRHCPolicy(Transit="SO-A");
+            obj.policies('ED-ORHC FO-V')      = @() EDRHCPolicy(Transit="FO-V");
+            obj.policies('ED-ORHC FO-A')      = @() EDRHCPolicy(Transit="FO-A");
 
             obj.agentTypes = containers.Map('KeyType','char','ValueType','any');
             obj.agentTypes('Default Agent') = @(idx, pos, sp) DefaultAgent(idx, pos, sp);

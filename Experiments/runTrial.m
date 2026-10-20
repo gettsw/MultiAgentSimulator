@@ -61,6 +61,13 @@ for i = 1:numel(f)
         end
     end
 end
+% EnergyBeta (optional, in [0, 1)) sets an energy-aware policy's energyWeight by the paper's
+% App. A rule (EDRHCPolicy.weightFromBeta; EnergyBound "speed" (default) or "accel")
+if isfield(p, 'EnergyBeta') && isprop(pol, 'energyWeight')
+    bound = "speed";
+    if isfield(p, 'EnergyBound'), bound = p.EnergyBound; end
+    pol.energyWeight = EDRHCPolicy.weightFromBeta(p.EnergyBeta, model, bound);
+end
 model.setUncertaintyMode(char(p.UncertaintyMode));
 model.resetSimulationState();  % also clears RHC reservation tables from earlier trials
 if p.Seed >= 0, rng(p.Seed); end   % -1 (the default) keeps the caller's rng state

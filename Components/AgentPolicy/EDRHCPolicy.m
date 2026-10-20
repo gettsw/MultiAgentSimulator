@@ -2,10 +2,10 @@ classdef EDRHCPolicy < handle
     % Event-driven receding horizon control (ED-RHC) for persistent monitoring on networks,
     % with the weighted RHCP3 objective of RHC-alpha: S. Welikala and C. G. Cassandras,
     % "Event-driven receding horizon control for distributed persistent monitoring in network
-    % systems", Automatica 127 (2021) 109519, Secs. II-IV. With transit = "SO" or "FO-3" it is
-    % the energy-aware variant of S. Welikala and C. G. Cassandras, "Event-driven receding
-    % horizon control of energy-aware dynamic agents for distributed persistent monitoring",
-    % arXiv 2102.12963 (IEEE CDC 2021), Secs. III-IV.
+    % systems", Automatica 127 (2021) 109519, Secs. II-IV. With an energy-aware transit model
+    % (below) it is the energy-aware variant of S. Welikala and C. G. Cassandras, "Event-driven
+    % receding horizon control of energy-aware dynamic agents for distributed persistent
+    % monitoring", arXiv 2102.12963 (IEEE CDC 2021), Secs. III-IV and Apps. D-E.
     %
     % Each agent decides for itself, at its events, using only local information: its target
     % i and the 1-hop neighbors of i (their R, A, B, the lengths of the edges (i, j), and
@@ -25,9 +25,14 @@ classdef EDRHCPolicy < handle
     %
     % Transit models (property transit):
     %   "constant speed"  rho_ij = y_ij / maxSpeed, fixed (first-order agents, FO-0; LinearAgent)
-    %   "SO"              rho_ij is a decision: the RHCP minimizes energyWeight * 12 y^2/rho^3
-    %                     + J_sH, the energy of the SO speed profile (Theorem 3)
-    %   "FO-3"            as "SO" with the trapezoid profile, energy 27 y^2/(2 rho^3) (Theorem 5)
+    %   "SO"              rho_ij is a decision: the RHCP minimizes energyWeight * E(rho) + J_sH
+    %                     with the energy E(rho) = 12 y^2/rho^3 of the SO speed profile (Theorem 3)
+    %   "FO"              as "SO" with the trapezoid profile, E = 27 y^2/(2 rho^3) (the paper's
+    %                     FO-3, Theorem 5)
+    %   "SO-V", "SO-A",   as "SO" and "FO" with the agent's speed bound maxSpeed (-V) or
+    %   "FO-V", "FO-A"    acceleration bound maxAccel (-A): E(rho) of the bounded minimum-energy
+    %                     profile (Apps. D-E; SecondOrderAgent.transitEnergy), and rho no shorter
+    %                     than the bound allows
     % The energy-aware models are meant for SecondOrderAgent: when the agent leaves, the policy
     % hands it rho_ij and the profile. With a SecondOrderAgent, "constant speed" executes the
     % FO-0 plans with the SO profile over rho = y/maxSpeed (the JS simulator's SO#).
@@ -35,14 +40,17 @@ classdef EDRHCPolicy < handle
     % The RHCPs are solved numerically: each smooth case of the paper's case split (v > 0
     % only after R has been driven to 0) is searched on a grid and refined with fmincon,
     % instead of with the closed forms of the paper's Appendix A. With an energy-aware transit
-    % model rho_ij is a third variable of each case, searched over [0.1 y/maxSpeed, H].
+    % model rho_ij is a third variable of each case, searched over [0.1 y/maxSpeed, H] (or from
+    % the shortest transit the bound allows).
     properties
         alpha = "nominal"    % RHCP3 weight of the next target: "nominal" = 1/|N_i|^2 (N_i
                              % includes i), or a number in [0, 1]; 0.5 = unweighted ED-RHC
-        transit = "constant speed"   % "constant speed", "SO" or "FO-3" (see above)
+        transit = "constant speed"   % "constant speed", "SO", "FO", "SO-V", "SO-A", "FO-V" or
+                                     % "FO-A" (see above)
         energyWeight = 7.68e-3       % weight of the energy objective int u^2 dt (alpha in eqs. 3
                                      % and 20 of the energy-aware paper): its 213.3e-6 for a
-                                     % 600 x 600 space, times 36 for our 100 x 100 canvas
+                                     % 600 x 600 space, times 36 for our 100 x 100 canvas;
+                                     % weightFromBeta gives the paper's App. A rule
         clearFirst = false   % true: every visit clears the target. On arrival the agent stays
                              % until R_i = 0 (no RHCP1), and the RHCPs only plan visits to j
                              % that clear it (the JS simulator's energy-aware methods)
@@ -68,7 +76,8 @@ classdef EDRHCPolicy < handle
         function obj = EDRHCPolicy(opts)
             arguments
                 opts.Alpha = "nominal"
-                opts.Transit string {mustBeMember(opts.Transit, ["constant speed", "SO", "FO-3"])} = "constant speed"
+                opts.Transit string {mustBeMember(opts.Transit, ["constant speed", "SO", "FO", ...
+                    "SO-V", "SO-A", "FO-V", "FO-A"])} = "constant speed"
             end
             obj.alpha = opts.Alpha;
             obj.transit = opts.Transit;
@@ -114,7 +123,7 @@ classdef EDRHCPolicy < handle
             obj.states(agent.index) = struct('stage', "travel", 'target', j, 'covered', [], 'hold', false);
             if isprop(agent, 'transitTime')   % hand the planned transit over to the agent
                 agent.transitTime = rho;
-                if obj.transit == "FO-3", agent.transitProfile = "trapezoid"; else, agent.transitProfile = "SO"; end
+                if obj.transit == "constant speed", agent.transitProfile = "SO"; else, agent.transitProfile = obj.transit; end
             end
             cmd.kind = "move";
             cmd.targetIdx = j;
@@ -166,10 +175,11 @@ classdef EDRHCPolicy < handle
                     if rho0 > obj.H, continue; end
                     rhoRange = [rho0 rho0];
                 else
-                    rhoRange = [obj.minTransit * rho0, obj.H];
+                    vb = agent.state.maxSpeed; ub = agent.state.maxAccel;
+                    rhoRange = [max(obj.minTransit * rho0, SecondOrderAgent.minTransit(obj.transit, y, vb, ub)), obj.H];
                 end
                 d = struct('R', R, 'A', A, 'B', B, 'j', k, 'rho', rho0, 'w', weights, ...
-                    'y', y, 'e', obj.energyCoefficient());
+                    'y', y, 'vb', agent.state.maxSpeed, 'ub', agent.state.maxAccel);
                 for c = obj.cases(kind, d, uBi, rhoRange(1))
                     [cost, x, rho] = obj.solveCase(d, c, rhoRange);
                     if cost < best.cost
@@ -201,6 +211,28 @@ classdef EDRHCPolicy < handle
             % every other target grows over the whole horizon
             Jm = w .* (2 * sum(d.R(others)) + sum(d.A(others)) * w) / 2;
             J = (d.w(1) * Jj + d.w(2) * (Ji + Jm)) ./ w;
+        end
+
+        function w = weightFromBeta(beta, model, bound)
+            % Energy weight by App. A, eq. (77), of the energy-aware paper: beta in [0, 1)
+            % balances energy against sensing (0.5 = equal weight), with the preferred speed or
+            % acceleration bound of the agents:
+            %   bound = "speed":  w = beta/(1 - beta) * ybar^2 / vmax^4
+            %   bound = "accel":  w = beta/(1 - beta) / umax^2
+            % ybar is the mean edge length of the model's network and vmax, umax the agents'
+            % mean maxSpeed and maxAccel.
+            arguments
+                beta (1,1) double {mustBeInRange(beta, 0, 1, 'exclude-upper')}
+                model
+                bound string {mustBeMember(bound, ["speed", "accel"])} = "speed"
+            end
+            states = [model.agents.state];
+            if bound == "speed"
+                ybar = mean(arrayfun(@(e) sum(vecnorm(diff(e.curvePoints, 1, 1), 2, 2)), model.edges));
+                w = beta / (1 - beta) * ybar^2 / mean([states.maxSpeed])^4;
+            else
+                w = beta / (1 - beta) / mean([states.maxAccel])^2;
+            end
         end
     end
 
@@ -268,15 +300,6 @@ classdef EDRHCPolicy < handle
                 a = 1 / hoodSize^2;
             end
             w = [a, 1 - a];
-        end
-
-        function k = energyCoefficient(obj)
-            % E(rho) = k y^2 / rho^3 for the transit model (0: energy-agnostic)
-            switch obj.transit
-                case "SO",   k = 12;        % Theorem 3
-                case "FO-3", k = 27 / 2;    % Theorem 5
-                otherwise,   k = 0;
-            end
         end
 
         function cs = cases(obj, kind, d, uBi, rhoLo)
@@ -395,7 +418,8 @@ classdef EDRHCPolicy < handle
                     J = obj.planCost(d, Z * M' + c0);
                 else
                     r = Z(:, 3);
-                    J = obj.planCost(d, [Z * M' + c0, r]) + sum(d.w) / 2 * obj.energyWeight * d.e * d.y^2 ./ r.^3;
+                    J = obj.planCost(d, [Z * M' + c0, r]) + sum(d.w) / 2 * obj.energyWeight ...
+                        * SecondOrderAgent.transitEnergy(obj.transit, d.y, r, d.vb, d.ub);
                 end
             end
         end

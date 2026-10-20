@@ -106,17 +106,27 @@ Screenshots of each stage are written to `results/gui/` (git-ignored).
 
 ### Energy-aware ED-RHC (ED-ORHC)
 
-`ED-ORHC SO` and `ED-ORHC FO-3` (the same `EDRHCPolicy` with `transit = "SO"` or `"FO-3"`) implement the energy-aware variant of S. Welikala and C. G. Cassandras, "Event-driven receding horizon control of energy-aware dynamic agents for distributed persistent monitoring", arXiv 2102.12963 (IEEE CDC 2021). Use them with the **Second-Order Agent**.
+`ED-ORHC SO`, `ED-ORHC FO` and their bounded variants `ED-ORHC SO-V`, `SO-A`, `FO-V` and `FO-A` implement the energy-aware variant of S. Welikala and C. G. Cassandras, "Event-driven receding horizon control of energy-aware dynamic agents for distributed persistent monitoring", arXiv 2102.12963 (IEEE CDC 2021). All of them are `EDRHCPolicy` with `transit` set to the method name. Use them with the **Second-Order Agent**.
 
-- **Objective.** `J_T = energyWeight * J_e + J_s`, where `J_e` is the integral of the squared tangential acceleration `u(t)^2` over all agents and `J_s` is the usual sensing objective. The default `energyWeight = 7.68e-3` is the paper's `213.3e-6` (600 x 600 space) rescaled to the 100 x 100 canvas. Energy grows with length squared, so the factor is 36.
-- **Transit time as a decision.** Events, locality, covering and RHC-alpha are as in ED-RHC. Each RHCP also chooses the transit time `rho_ij` and adds the energy `E(rho)` of the speed profile: `12 y^2/rho^3` for SO (Theorem 3) and `27 y^2/(2 rho^3)` for FO-3 (Theorem 5). In RHCP3 the alpha-weighted sensing cost is doubled, so that `alpha = 0.5` gives the paper's objective.
-- **Second-Order Agent** (`Components/AgentTypes/SecondOrderAgent.m`) follows its path by arc length. It uses the SO speed profile `v(t) = 6 y t (rho - t)/rho^3`, or the FO-3 trapezoid (accelerate for `rho/3`, cruise, brake for `rho/3`), over the transit time the policy hands it. It starts and stops at rest and stays still while dwelling. It accumulates `J_e` exactly and keeps the Energy Agent battery model as a reported SOC.
+- **Objective.** `J_T = energyWeight * J_e + J_s`. Here `J_e` is the integral of the squared tangential acceleration `u(t)^2` over all agents, and `J_s` is the usual sensing objective.
+  - The default `energyWeight = 7.68e-3` is the paper's `213.3e-6` (for a 600 x 600 space) rescaled to the 100 x 100 canvas. Energy grows with length squared, so the factor is 36.
+  - `EDRHCPolicy.weightFromBeta(beta, model)` gives the paper's App. A rule, eq. (77): `beta/(1 - beta) * ybar^2 / vmax^4`, where `ybar` is the mean edge length and `vmax` the agents' `maxSpeed`. With `"accel"` as a third argument it gives `beta/(1 - beta) / umax^2`.
+  - In `runTrial`, `'EnergyBeta', beta` (optionally with `'EnergyBound', "accel"`) applies this rule.
+- **Transit time as a decision.** Events, locality, covering and RHC-alpha are as in ED-RHC. In addition, each RHCP chooses the transit time `rho_ij` and adds the energy `E(rho)` of the speed profile on that edge. In RHCP3 the alpha-weighted sensing cost is doubled, so that `alpha = 0.5` gives the paper's objective.
+- **Speed profiles** (`Components/AgentTypes/SecondOrderAgent.m`). Each is the minimum-energy profile of its class for the given `y` and `rho`, rest to rest:
+  - **SO:** `v(t) = 6 y t (rho - t)/rho^3`, with `E = 12 y^2/rho^3` (Theorem 3).
+  - **FO** (the paper's FO-3): a trapezoid that accelerates for `rho/3`, cruises at `3y/(2 rho)` and brakes for `rho/3`, with `E = 27 y^2/(2 rho^3)` (Theorem 5).
+  - **SO-V and FO-V:** keep the speed at or below the agent's `maxSpeed`.
+  - **SO-A and FO-A:** keep `|u|` at or below the agent's `maxAccel` (Apps. D-E).
+  - A bounded profile equals the unbounded one while the bound is not reached. The RHCP then never plans a transit shorter than the bound allows.
+  - SO-V keeps `u` continuous: `u` falls linearly to 0 as the speed reaches the bound. This uses 2-6% less energy than the paper's App. D profile, which cuts the SO parabola at the bound.
+- **Second-Order Agent.** It follows its path by arc length over the transit time and profile the policy hands it. It starts and stops at rest and stays still while dwelling. It accumulates `J_e` exactly and keeps the Energy Agent battery model as a reported SOC.
   - Without a planned transit time, the agent uses the SO profile with peak speed `maxSpeed`.
   - Under `ED-RHC-alpha` it runs each fixed transit `y/maxSpeed` with the SO profile, which is the JS simulator's SO#.
 - **Metrics.** With Second-Order Agents, `runTrial` also returns `out.Je`, `out.JT`, `out.vmax` and `out.umax` (paper eqs. 3 and 73), and `out.log.Je` holds the per-step energy.
 - **`clearFirst`** (default `false`, which follows the paper). Set it to `true` for the JS simulator's energy-aware convention: every visit clears the target, there is no RHCP1 on arrival, and plans only include visits that clear `j`.
 
-`Experiments/validation/validateEDORHC` compares both methods with the JS simulator (methods 9 and 11) under the JS conventions.
+`Experiments/validation/validateEDORHC` compares SO and FO with the JS simulator (methods 9 and 11) under the JS conventions.
 
 ## Headless experiments
 

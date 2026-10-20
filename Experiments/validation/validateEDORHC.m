@@ -1,6 +1,7 @@
 function T = validateEDORHC(opts)
-% Compares the energy-aware policies ED-ORHC SO and ED-ORHC FO-3 (SecondOrderAgent) with the
-% legacy JavaScript simulator (Simulator_PerMon_JS, methods 9 and 11), which produced the
+% Compares the energy-aware policies ED-ORHC SO and ED-ORHC FO (SecondOrderAgent) with the
+% legacy JavaScript simulator (Simulator_PerMon_JS, methods 9 and 11 = the paper's SO and
+% FO-3; our FO is the paper's FO-3), which produced the
 % results of Welikala and Cassandras, arXiv 2102.12963 (CDC 2021). Presets and settings as in
 % validateEDRHC (Configurations/Legacy/, lengths / 6, A = 1, B = 10, R(0) = 0.5, T = 500 s,
 % dt = 0.01 s, H = 250), with the JS conventions of the energy-aware methods:
@@ -18,11 +19,11 @@ function T = validateEDORHC(opts)
 % paper's Table I.
 arguments
     opts.Presets (1,:) double = 1:8
-    opts.Methods (1,:) string = ["SO", "FO-3"]
+    opts.Methods (1,:) string = ["SO", "FO"]
 end
 files = ["JS_1Agent_3T", "JS_1Agent_4T", "JS_1Agent_5T", "JS_2Agent_5T", ...
     "JS_3Agent_9T", "JS_3Agent_Maze", "JS_3Agent_General", "JS_3Agent_Room"];
-% JS [J_s, J_e, J_T, v_max, u_max] per preset; SO (method 9), then FO-3 (method 11)
+% JS [J_s, J_e, J_T, v_max, u_max] per preset; SO (method 9), then FO = FO-3 (method 11)
 js.SO = [
     23.3392   585855.6  148.3218   81.335   71.016
     47.8605   518547.4  158.4840   73.363   71.761
@@ -32,7 +33,7 @@ js.SO = [
    131.0053  1412894.4  432.4228   94.771   75.382
    103.8396  1657366.9  457.4112   84.563   87.911
    107.2108  1808715.0  493.0700  106.600  113.376];
-js.FO3 = [
+js.FO = [
     24.1591   582326.2  148.3887   78.979   50.222
     49.6020   519518.0  160.4325   71.242   50.754
     97.5396   694394.8  245.6772  115.395   71.909
@@ -53,7 +54,7 @@ for k = opts.Presets
             'Policy_energyWeight', 2 * 36 * w, 'AgentSpeed', s.s.agentSpeed(1));
         tic;
         out = runTrial(p);
-        ref = js.(erase(method, "-"))(k, :);
+        ref = js.(method)(k, :);
         mine = [out.finalJ, 36 * out.Je, 36 * w * out.Je + out.finalJ, 6 * out.vmax, 6 * out.umax];
         rows(end+1, :) = {erase(files(k), "JS_"), method, ref(3), mine(3), pct(mine(3), ref(3)), ...
             ref(1), mine(1), pct(mine(1), ref(1)), ref(2), mine(2), pct(mine(2), ref(2)), ...
