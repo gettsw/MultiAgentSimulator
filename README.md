@@ -54,9 +54,9 @@ Each target's uncertainty follows `dR_i/dt = (A_i - B_i N_i) v_i`, where `N_i` i
 
 The other modes are opt-in from the **Uncertainty** dropdown:
 - `Static Priority Target` — target 1 grows at `A = 5`, the rest at their `A_i`.
-- `Dynamic Uncertainty` — as above, plus periodic spikes: every target's rate jumps to `A_spike = 28` for 10 s every 250 s, staggered by 50 s from one target to the next. With the default `B = 10`, three agents are needed to bring a spiking target down (`28 - 3*10 < 0`).
+- `Dynamic Uncertainty` — as above, plus periodic spikes: every target's rate jumps to `A_spike = 14` for 10 s every 250 s, staggered by 50 s from one target to the next. With `B = 10`, one agent cannot bring a spiking target down (`14 - 10 > 0`) but two can (`14 - 2*10 < 0`).
 
-The experiment harness (`Experiments/runTrial`, `Experiments/trialDefaults.m`) sets its own uncertainty parameters for every trial (by default `Dynamic Uncertainty` with `B = 20`), so its results do not depend on these GUI defaults.
+The experiment harness (`Experiments/runTrial`, `Experiments/trialDefaults.m`) sets its own uncertainty parameters for every trial (by default `Dynamic Uncertainty` with `B = 20` and `A_spike = 28`, the same one-agent/two-agent balance), so its results do not depend on these GUI defaults.
 
 ## Layout files
 

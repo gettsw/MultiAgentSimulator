@@ -22,7 +22,7 @@ classdef Target < handle
         A_base = 1.0          % Baseline growth rate for the active mode (set each step)
         A_priorityBase = 1.0  % Baseline when target 1 is the high-priority target
         A_uniformBase = 1.0   % Baseline for every target in 'Static Uniform'
-        A_spike = 28.0        % Emergency spike growth rate; net rate with n agents is A_spike - n*B
+        A_spike = 14.0        % Spike growth rate; net with n agents is A_spike - n*B (B = 10: 1 agent +4, 2 agents -6)
         spikeInterval = 250.0 % Total cycle repeat time (5 targets * 50s step = 250s)
         spikeDuration = 10.0  % Active window duration of spike (seconds)
         spikePhaseOffset = 0  % Stagger offset (seconds)
@@ -56,7 +56,7 @@ classdef Target < handle
         initialLastVisitedTime
         % Bar scaling settings
         barMaxDisplayHeight = 15   % height in axis units
-        barMaxR = 25              % R value that maps to full height (expanded for spikes)
+        barMaxR = 25              % R at full height (set by updateBar, shared by all targets)
         barWidth = 2              % width of the bar
         barYOffset = 3            % offset above the target marker
     end
@@ -81,7 +81,7 @@ classdef Target < handle
 
             % --- Scenario C Configuration (40s Delay Between Spikes) ---
             obj.A_base = 1.0;
-            obj.A_spike = 28.0;
+            obj.A_spike = 14.0;
             obj.spikeDuration = 10.0;  % 10 seconds of active spike
 
             % Priority modes: Target 1 grows faster; 'Static Uniform' uses A_base = 1 for all
@@ -196,8 +196,10 @@ classdef Target < handle
             if ~isempty(R0), obj.R = R0; obj.initialR = R0; end
         end
 
-        function updateBar(obj)
-            % Called once per rendered frame, not every physics step
+        function updateBar(obj, maxR)
+            % Called once per rendered frame, not every physics step. maxR (optional) is the R
+            % drawn at full height; ScenarioRenderer passes the largest R seen in the run
+            if nargin > 1, obj.barMaxR = maxR; end
             if ~isempty(obj.barHandle) && isvalid(obj.barHandle)
                 set(obj.barHandle, 'Position', obj.computeBarPosition(), ...
                     'FaceColor', obj.computeBarColor());
@@ -401,7 +403,12 @@ classdef Target < handle
         function pos = computeBarFramePosition(obj)
             x = obj.position(1) - obj.barWidth/2;
             y = obj.position(2) + obj.barYOffset;
-            pos = [x, y, obj.barWidth, obj.barMaxDisplayHeight];
+            pos = [x, y, obj.barWidth, obj.barDisplayHeight()];
+        end
+
+        function h = barDisplayHeight(obj)
+            % Full bar height, shortened for targets near the top of the canvas (fixed at y = 100)
+            h = max(2, min(obj.barMaxDisplayHeight, 100 - obj.position(2) - obj.barYOffset));
         end
 
         function h = computeBarHeight(obj)
@@ -410,7 +417,7 @@ classdef Target < handle
                 return;
             end
             frac = min(max(obj.R / obj.barMaxR, 0), 1);
-            h = frac * obj.barMaxDisplayHeight;
+            h = frac * obj.barDisplayHeight();
         end
 
         function c = computeBarColor(obj)

@@ -3,6 +3,7 @@ classdef ScenarioRenderer < handle
         ax
         edgePreviewLine
         bgImageHandle
+        barScale = 25   % R at full bar height: the largest R seen since the last full redraw
     end
 
     methods
@@ -71,6 +72,7 @@ classdef ScenarioRenderer < handle
         end
 
         function renderAll(obj, model)
+            obj.barScale = 25;   % full redraws come with resets, loads and edits
             obj.renderWalls(model);
             obj.renderEdges(model);
             obj.renderTargets(model);
@@ -100,7 +102,9 @@ classdef ScenarioRenderer < handle
         end
 
         function renderAgents(obj, model)
-            for t = 1:numel(model.targets), model.targets(t).updateBar(); end
+            % One scale for all bars, growing with the largest R so bars never saturate
+            if ~isempty(model.targets), obj.barScale = max(obj.barScale, max([model.targets.R])); end
+            for t = 1:numel(model.targets), model.targets(t).updateBar(obj.barScale); end
             for k = 1:numel(model.agents)
                 a = model.agents(k);
                 if isempty(a.graphicHandle) || ~isgraphics(a.graphicHandle)

@@ -1,6 +1,9 @@
 function p = trialDefaults()
 % Default trial parameters. Shared by runTrial (fills unset parameters) and
 % analyzeResults (knows which table columns are parameters, fills missing ones).
+% These are the settings of the Joint RHC study (2 agents, spikes, B = 20), not the
+% simulator paper's (Static Uniform, A = 1, B = 10, ReportLayout.mat with 5 agents; see
+% README). The ablation and diagnostic scripts in Experiments/ rely on them.
 p = struct( ...
     'Policy', "Joint RHC", ...                    % "Joint RHC" | "Classical RHC [1]"
     'UncertaintyMode', "Dynamic Uncertainty", ... % | "Static Priority Target" | "Static Uniform"
