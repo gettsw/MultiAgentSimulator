@@ -10,48 +10,55 @@ classdef LinearAgent < Agent
         end
 
         function update(obj, dt)
+            obj.state.acc = [0 0];
             if isempty(obj.path)
-                obj.state.acc = [0 0];
                 obj.state.vel = [0 0];
             else
-                % Get the coordinate position of the next waypoint in the path matrix
-                % (Handles path as either a matrix of row coordinates or an array of objects)
-                if isobject(obj.path)
-                    nextPoint = obj.path(obj.pathIndex).position(:)';
-                else
-                    nextPoint = obj.path(obj.pathIndex, :);
-                end
-
-                % Calculate direction vector and distance
-                toTarget = nextPoint - obj.state.pos;
-                distance = norm(toTarget);
-
-                % Maximum distance the agent can travel this frame at full speed
-                maxStep = obj.state.maxSpeed * dt;
-
-                if distance <= maxStep
-                    % --- ARRIVED AT WAYPOINT ---
-                    obj.state.pos = nextPoint; % Snap precisely to the point
-                    obj.state.vel = [0 0];
-
+                % Travel maxSpeed*dt along the path, passing every waypoint that distance
+                % reaches, so the speed is constant along curved paths too (transit time =
+                % path length / maxSpeed, as event-driven RHC assumes)
+                remaining = obj.state.maxSpeed * dt;
+                dir = [0 0];
+                while ~isempty(obj.path)
+                    toNext = obj.waypoint(obj.pathIndex) - obj.state.pos;
+                    distance = norm(toNext);
+                    if distance > 0, dir = toNext / distance; end
+                    if distance > remaining
+                        obj.state.pos = obj.state.pos + dir * remaining;
+                        break;
+                    end
+                    obj.state.pos = obj.waypoint(obj.pathIndex);   % reach it, carry on with the rest
+                    remaining = remaining - distance;
                     obj.pathIndex = obj.pathIndex + 1;
-                    if obj.pathIndex > size(obj.path, 1) || (isobject(obj.path) && obj.pathIndex > numel(obj.path))
+                    if obj.pathIndex > obj.numWaypoints()
                         obj.path = [];
                         obj.pathIndex = 1;
                     end
-                else
-                    % --- CONSTANT SPEED MOVE ---
-                    dir = toTarget / distance;
-                    obj.state.vel = dir * obj.state.maxSpeed;
-                    obj.state.pos = obj.state.pos + obj.state.vel * dt;
-                    obj.state.acc = [0 0];
-
-                    % Calculate orientation angle (heading) based on movement direction
-                    obj.state.ori = atan2(dir(2), dir(1));
                 end
+                if isempty(obj.path)
+                    obj.state.vel = [0 0];               % arrived
+                else
+                    obj.state.vel = dir * obj.state.maxSpeed;
+                end
+                if any(dir), obj.state.ori = atan2(dir(2), dir(1)); end
             end
 
             obj.updateVisuals();
+        end
+    end
+
+    methods (Access = private)
+        % The path is a matrix of [x y] rows, or an array of objects with a position
+        function p = waypoint(obj, k)
+            if isobject(obj.path)
+                p = obj.path(k).position(:)';
+            else
+                p = obj.path(k, :);
+            end
+        end
+
+        function n = numWaypoints(obj)
+            if isobject(obj.path), n = numel(obj.path); else, n = size(obj.path, 1); end
         end
     end
 end
