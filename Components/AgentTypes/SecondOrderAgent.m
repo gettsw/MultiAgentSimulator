@@ -3,28 +3,31 @@ classdef SecondOrderAgent < EnergyAgent
     % control of energy-aware dynamic agents for distributed persistent monitoring", arXiv
     % 2102.12963 (IEEE CDC 2021): a second-order unicycle whose tangential acceleration u is the
     % control. It follows its path by arc length (the heading follows the path, Theorem 2),
-    % starts and stops at rest on the targets and stays still while dwelling. On an edge of
-    % length y crossed in time rho it uses the minimum-energy speed profile of its class:
-    %   "SO"    v(t) = 6y t (rho - t)/rho^3 (Theorem 3), energy 12 y^2/rho^3
-    %   "FO"    trapezoid: accelerate for rho/3, cruise at 3y/(2 rho), brake for rho/3 (the
-    %           paper's FO-3, Theorem 5), energy 27 y^2/(2 rho^3)
-    %   "SO-V"  SO under the speed bound maxSpeed (App. D): when the SO peak 3y/(2 rho) exceeds
-    %           it, u falls linearly to 0 as v reaches the bound, cruise, mirror image; energy
-    %           16 vb^3/(9 (vb rho - y)). (The paper's SO-V cuts the SO parabola at the bound,
-    %           so u jumps there; this profile keeps u continuous and uses less energy.)
-    %   "SO-A"  SO under the acceleration bound maxAccel (App. D): u = ub, then linear from ub
-    %           to -ub, then -ub; energy ub^2 (3 rho - 2 sqrt(3 rho^2 - 12 y/ub))/3
-    %   "FO-V"  trapezoid cruising at maxSpeed (App. E), energy 2 vb^3/(vb rho - y)
-    %   "FO-A"  trapezoid accelerating at maxAccel (App. E), energy ub^2 (rho - sqrt(rho^2 - 4y/ub))
-    % A bounded profile equals its unbounded one while the bound is not reached.
-    % A policy sets transitTime and transitProfile before the agent leaves a target (as the RHC
-    % policies set dwellRemaining). Without them the agent uses the SO profile with peak speed
-    % maxSpeed. Je accumulates the paper's energy objective int u(t)^2 dt exactly (steering is
-    % not counted). The battery (e_total, soc) uses the EnergyAgent power model with the
-    % tangential acceleration; it is reported only and never stops the agent.
+    % starts and stops at rest on the targets and stays still while dwelling.
+    %
+    % On an edge of length y crossed in time rho it uses the minimum-energy (min int u^2 dt)
+    % speed profile of its family, under a speed limit vb and an acceleration limit ub (Inf =
+    % no limit):
+    %   "SO"  any profile. Without limits v(t) = 6y t (rho - t)/rho^3, E = 12 y^2/rho^3 (Theorem 3).
+    %         A reached limit changes the shape (App. D, generalized to both limits):
+    %           speed:  u falls linearly to 0 as v reaches vb, cruise, mirror image
+    %                   (u stays continuous, unlike the paper's SO-V, which uses more energy)
+    %           accel:  u = ub, then linear from ub to -ub, then -ub (the paper's SO-A)
+    %           both:   u = ub, then linear down to 0 as v reaches vb, cruise, mirror image
+    %   "FO"  trapezoids (accelerate, cruise, brake; the paper's FO-3). Without limits the
+    %         cruise speed is 3y/(2 rho), E = 27 y^2/(2 rho^3) (Theorem 5); with limits it is
+    %         clamped to what they allow (App. E's FO-V and FO-A)
+    % Limits make transits shorter than minTransit infeasible.
+    %
+    % A policy sets transitTime, transitProfile and transitLimits before the agent leaves a
+    % target (as the RHC policies set dwellRemaining). Without them the agent uses the SO profile
+    % with peak speed maxSpeed. Je accumulates the paper's energy objective int u(t)^2 dt
+    % exactly (steering is not counted). The battery (e_total, soc) uses the EnergyAgent power
+    % model with the tangential acceleration; it is reported only and never stops the agent.
     properties
         transitTime = NaN               % transit time of the next edge [s] (NaN: SO with peak speed maxSpeed)
-        transitProfile string = "SO"    % speed profile of the next edge (see above)
+        transitProfile string = "SO"    % profile family of the next edge: "SO" or "FO"
+        transitLimits = [Inf Inf]       % [speed limit, acceleration limit] of the next edge
         Je = 0                          % energy objective int u(t)^2 dt so far
         peakSpeed = 0                   % largest tangential speed so far
         peakAccel = 0                   % largest |tangential acceleration| so far
@@ -32,10 +35,6 @@ classdef SecondOrderAgent < EnergyAgent
 
     properties (Access = private)
         leg = []   % the edge in progress: struct(pts, s, P (profile), tau, e)
-    end
-
-    properties (Constant)
-        profiles = ["SO", "SO-V", "SO-A", "FO", "FO-V", "FO-A"]
     end
 
     methods
@@ -47,6 +46,7 @@ classdef SecondOrderAgent < EnergyAgent
             resetToInitial@EnergyAgent(obj);
             obj.transitTime = NaN;
             obj.transitProfile = "SO";
+            obj.transitLimits = [Inf Inf];
             obj.Je = 0;
             obj.peakSpeed = 0;
             obj.peakAccel = 0;
@@ -91,35 +91,27 @@ classdef SecondOrderAgent < EnergyAgent
     end
 
     methods (Static)
-        function P = shape(name, y, rho, vb, ub)
-            % Parameters of the minimum-energy profile <name> on an edge of length y crossed in
-            % time rho, with speed bound vb and acceleration bound ub (used by the -V and -A
-            % profiles). P.kind: "cubic" (SO), "ramp" (SO-V, bound reached), "sat" (SO-A, bound
-            % reached), "trap" (FO family)
-            P = struct('name', name, 'y', y, 'rho', rho, 'kind', "cubic", 'a', 0, 't1', 0, 'v', 0);
-            switch name
+        function P = shape(family, y, rho, vb, ub)
+            % The minimum-energy profile of <family> ("SO" or "FO") on an edge of length y crossed
+            % in time rho (at least minTransit) under speed limit vb and acceleration limit ub.
+            % P.kind: "cubic" (unconstrained SO), "sat" (SO with u at its limit, no cruise), or
+            % "arc": accelerate at a for s, ramp u from a to 0 over d, cruise at v (SO with the
+            % speed limit reached; d = 0 for FO trapezoids)
+            P = struct('family', family, 'y', y, 'rho', rho, 'kind', "arc", 'a', 0, 's', 0, 'd', 0, 'v', 0);
+            switch family
                 case "SO"
-                case "SO-V"
-                    if 3 * y / (2 * rho) > vb
-                        t1 = 3 * (vb * rho - y) / (2 * vb);
-                        P.kind = "ramp"; P.t1 = t1; P.a = 2 * vb / t1; P.v = vb;
+                    [~, regime, p] = SecondOrderAgent.soEnergy(y, rho, vb, ub);
+                    switch regime
+                        case "none", P.kind = "cubic";
+                        case "A",    P.kind = "sat"; P.a = ub; P.s = p;
+                        case "V",    P.a = 2 * vb / p; P.d = p; P.v = vb;
+                        case "VA",   P.a = ub; P.d = p; P.s = vb / ub - p / 2; P.v = vb;
                     end
-                case "SO-A"
-                    if 6 * y / rho^2 > ub
-                        s = (rho - sqrt(max(3 * rho^2 - 12 * y / ub, 0))) / 2;
-                        P.kind = "sat"; P.t1 = s; P.a = ub;
-                    end
-                case {"FO", "FO-V", "FO-A"}
-                    P.kind = "trap";
-                    ta = rho / 3; uA = 9 * y / (2 * rho^2); vc = 3 * y / (2 * rho);
-                    if name == "FO-V" && vc > vb
-                        vc = vb; ta = rho - y / vb; uA = vb / ta;
-                    elseif name == "FO-A" && uA > ub
-                        uA = ub; vc = rho * ub / 2 * (1 - sqrt(max(1 - 4 * y / (ub * rho^2), 0))); ta = vc / ub;
-                    end
-                    P.a = uA; P.t1 = ta; P.v = vc;
+                case "FO"
+                    [~, vc] = SecondOrderAgent.foEnergy(y, rho, vb, ub);
+                    P.v = vc; P.a = vc^2 / (vc * rho - y); P.s = vc / P.a;
                 otherwise
-                    error('SecondOrderAgent:Profile', 'Unknown speed profile "%s"', name);
+                    error('SecondOrderAgent:Profile', 'Unknown profile family "%s"', family);
             end
         end
 
@@ -135,75 +127,108 @@ classdef SecondOrderAgent < EnergyAgent
             end
         end
 
-        function E = transitEnergy(name, y, rho, vb, ub)
-            % Energy int u^2 dt of profile <name> over the whole edge, for each transit time in rho
-            if startsWith(name, "SO"), E = 12 * y^2 ./ rho.^3; else, E = 27 * y^2 ./ (2 * rho.^3); end
-            switch name
-                case "SO-V"
-                    k = 3 * y ./ (2 * rho) > vb;
-                    E(k) = 16 * vb^3 ./ (9 * (vb * rho(k) - y));
-                case "SO-A"
-                    k = 6 * y ./ rho.^2 > ub;
-                    E(k) = ub^2 * (3 * rho(k) - 2 * sqrt(max(3 * rho(k).^2 - 12 * y / ub, 0))) / 3;
-                case "FO-V"
-                    k = 3 * y ./ (2 * rho) > vb;
-                    E(k) = 2 * vb^3 ./ (vb * rho(k) - y);
-                case "FO-A"
-                    k = 9 * y ./ (2 * rho.^2) > ub;
-                    E(k) = ub^2 * (rho(k) - sqrt(max(rho(k).^2 - 4 * y / ub, 0)));
+        function E = transitEnergy(family, y, rho, vb, ub)
+            % Energy int u^2 dt of the minimum-energy profile over the whole edge, for each
+            % transit time in rho (vectorized)
+            if family == "SO"
+                E = SecondOrderAgent.soEnergy(y, rho, vb, ub);
+            else
+                E = SecondOrderAgent.foEnergy(y, rho, vb, ub);
             end
         end
 
-        function r = minTransit(name, y, vb, ub)
-            % Shortest feasible transit time of profile <name> (0: none). The speed-bounded
-            % profiles need rho > y/vb (their energy grows without bound there).
-            switch name
-                case {"SO-V", "FO-V"}, r = 1.001 * y / vb;
-                case {"SO-A", "FO-A"}, r = 2 * sqrt(y / ub);
-                otherwise,             r = 0;
+        function r = minTransit(y, vb, ub)
+            % Shortest transit time the limits allow (same for both families: accelerate at ub,
+            % cruise at vb, brake). Under a speed limit alone the energy grows without bound as
+            % rho approaches y/vb, so 0.1% is added there.
+            if isfinite(vb) && isfinite(ub)
+                if y >= vb^2 / ub, r = y / vb + vb / ub; else, r = 2 * sqrt(y / ub); end
+            elseif isfinite(vb)
+                r = 1.001 * y / vb;
+            elseif isfinite(ub)
+                r = 2 * sqrt(y / ub);
+            else
+                r = 0;
             end
         end
     end
 
     methods (Static, Access = private)
+        function [E, regime, p] = soEnergy(y, rho, vb, ub)
+            % Minimum energy of any rest-to-rest profile (a convex problem with a unique optimum)
+            % and, for scalar rho, the regime ("none", "V", "A", "VA") and its parameter p:
+            % t1 for "V", the saturation time s for "A", the ramp time d for "VA"
+            E = 12 * y^2 ./ rho.^3;
+            todo = 3 * y ./ (2 * rho) > vb | 6 * y ./ rho.^2 > ub;   % a limit would be broken
+            regime = "none"; p = 0;
+            if isfinite(vb)   % speed limit only: needs peak acceleration 2vb/t1 <= ub
+                t1 = 3 * (vb * rho - y) / (2 * vb);
+                k = todo & 3 * y ./ (2 * rho) > vb & t1 > 0 & 2 * vb ./ t1 <= ub * (1 + 1e-12);
+                E(k) = 16 * vb^3 ./ (9 * (vb * rho(k) - y));
+                todo = todo & ~k;
+                if isscalar(rho) && k, regime = "V"; p = t1; end
+            end
+            if isfinite(ub)   % acceleration limit only: needs peak speed ub (s + m/4) <= vb
+                s = (rho - sqrt(max(3 * rho.^2 - 12 * y / ub, 0))) / 2;
+                k = todo & 6 * y ./ rho.^2 > ub & ub * (s + (rho - 2 * s) / 4) <= vb * (1 + 1e-12);
+                E(k) = ub^2 * (rho(k) + 4 * s(k)) / 3;
+                todo = todo & ~k;
+                if isscalar(rho) && k, regime = "A"; p = s; end
+            end
+            if any(todo) && isfinite(vb) && isfinite(ub)   % both limits reached
+                d = sqrt(max(12 * (vb * rho - y - vb^2 / ub) / ub, 0));
+                E(todo) = 2 * ub * vb - ub^2 * d(todo) / 3;
+                if isscalar(rho), regime = "VA"; p = d; end
+            end
+        end
+
+        function [E, vc] = foEnergy(y, rho, vb, ub)
+            % Minimum energy of a trapezoid: the energy 2 vc^3/(vc rho - y) falls with the cruise
+            % speed vc up to 3y/(2 rho), so vc is that value clamped to the limits: at most vb,
+            % and at least the vc whose acceleration vc^2/(vc rho - y) is ub
+            if isfinite(ub)
+                vlo = rho * ub / 2 .* (1 - sqrt(max(1 - 4 * y ./ (ub * rho.^2), 0)));
+            else
+                vlo = 0;
+            end
+            vc = min(vb, max(vlo, 3 * y ./ (2 * rho)));
+            E = 2 * vc.^3 ./ (vc .* rho - y);
+        end
+
         function [l, v, u, e] = firstHalf(P, t)
             y = P.y; rho = P.rho;
             switch P.kind
                 case "cubic"
-                    s = t / rho;
-                    l = y * (3 * s^2 - 2 * s^3);
+                    q = t / rho;
+                    l = y * (3 * q^2 - 2 * q^3);
                     v = 6 * y * t * (rho - t) / rho^3;
                     u = 6 * y * (rho - 2 * t) / rho^3;
                     e = 6 * y^2 / rho^6 * (rho^3 - (rho - 2 * t)^3);
-                case "ramp"     % u = a (1 - t/t1) until v = vb at t1, then cruise
-                    a = P.a; t1 = P.t1;
-                    if t <= t1
-                        u = a * (1 - t / t1);
-                        v = a * (t - t^2 / (2 * t1));
-                        l = a * (t^2 / 2 - t^3 / (6 * t1));
-                        e = a^2 * t1 / 3 * (1 - (1 - t / t1)^3);
-                    else
-                        u = 0; v = P.v;
-                        l = 2 * P.v * t1 / 3 + P.v * (t - t1);
-                        e = a^2 * t1 / 3;
-                    end
-                case "sat"      % u = ub until t1, then linear to -ub at rho - t1
-                    ub = P.a; s = P.t1; m = rho - 2 * s;
+                case "sat"      % u = a until s, then linear to -a at rho - s
+                    a = P.a; s = P.s; m = rho - 2 * s;
                     if t <= s
-                        u = ub; v = ub * t; l = ub * t^2 / 2; e = ub^2 * t;
-                    else
-                        tau = t - s;
-                        u = ub * (1 - 2 * tau / m);
-                        v = ub * (s + tau - tau^2 / m);
-                        l = ub * s^2 / 2 + ub * s * tau + ub * (tau^2 / 2 - tau^3 / (3 * m));
-                        e = ub^2 * s + ub^2 * m / 6 * (1 - (1 - 2 * tau / m)^3);
-                    end
-                case "trap"     % u = a until t1, then cruise at v
-                    a = P.a; ta = P.t1;
-                    if t <= ta
                         u = a; v = a * t; l = a * t^2 / 2; e = a^2 * t;
                     else
-                        u = 0; v = P.v; l = a * ta^2 / 2 + P.v * (t - ta); e = a^2 * ta;
+                        tau = t - s;
+                        u = a * (1 - 2 * tau / m);
+                        v = a * (s + tau - tau^2 / m);
+                        l = a * s^2 / 2 + a * s * tau + a * (tau^2 / 2 - tau^3 / (3 * m));
+                        e = a^2 * s + a^2 * m / 6 * (1 - (1 - 2 * tau / m)^3);
+                    end
+                case "arc"      % u = a until s, then linear to 0 over d, then cruise at v
+                    a = P.a; s = P.s; d = P.d;
+                    if t <= s
+                        u = a; v = a * t; l = a * t^2 / 2; e = a^2 * t;
+                    elseif t <= s + d
+                        tau = t - s;
+                        u = a * (1 - tau / d);
+                        v = a * s + a * (tau - tau^2 / (2 * d));
+                        l = a * s^2 / 2 + a * s * tau + a * (tau^2 / 2 - tau^3 / (6 * d));
+                        e = a^2 * s + a^2 * d / 3 * (1 - (1 - tau / d)^3);
+                    else
+                        u = 0; v = P.v;
+                        l = a * s^2 / 2 + a * s * d + a * d^2 / 3 + P.v * (t - s - d);
+                        e = a^2 * s + a^2 * d / 3;
                     end
             end
         end
@@ -225,12 +250,14 @@ classdef SecondOrderAgent < EnergyAgent
                 pts = [pts; pts]; s = [0; eps];
             end
             y = s(end);
-            name = obj.transitProfile;
-            vb = obj.state.maxSpeed; ub = obj.state.maxAccel;
+            family = obj.transitProfile;
+            lim = obj.transitLimits;
             rho = obj.transitTime;
-            if ~(rho > 0), name = "SO"; rho = 1.5 * y / vb; end      % default: SO, peak speed = maxSpeed
-            rho = max(rho, SecondOrderAgent.minTransit(name, y, vb, ub));
-            P = SecondOrderAgent.shape(name, y, rho, vb, ub);
+            if ~(rho > 0)                               % default: SO, peak speed = maxSpeed
+                family = "SO"; lim = [Inf Inf]; rho = 1.5 * y / obj.state.maxSpeed;
+            end
+            rho = max(rho, SecondOrderAgent.minTransit(y, lim(1), lim(2)));
+            P = SecondOrderAgent.shape(family, y, rho, lim(1), lim(2));
             obj.leg = struct('pts', pts, 's', s, 'P', P, 'tau', 0, 'e', 0);
             [~, vPeak] = SecondOrderAgent.profileAt(P, rho / 2);
             [~, ~, uPeak] = SecondOrderAgent.profileAt(P, 0);

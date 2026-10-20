@@ -5,7 +5,8 @@ classdef EDRHCPolicy < handle
     % systems", Automatica 127 (2021) 109519, Secs. II-IV. With an energy-aware transit model
     % (below) it is the energy-aware variant of S. Welikala and C. G. Cassandras, "Event-driven
     % receding horizon control of energy-aware dynamic agents for distributed persistent
-    % monitoring", arXiv 2102.12963 (IEEE CDC 2021), Secs. III-IV and Apps. D-E.
+    % monitoring", arXiv 2102.12963 (IEEE CDC 2021), Secs. III-IV and Apps. D-E (registered as
+    % ED-ORHC-SO and ED-ORHC-FO).
     %
     % Each agent decides for itself, at its events, using only local information: its target
     % i and the 1-hop neighbors of i (their R, A, B, the lengths of the edges (i, j), and
@@ -20,33 +21,37 @@ classdef EDRHCPolicy < handle
     % [u_i, v_i] at i, the transit rho_ij, and [u_j, v_j] at a neighbor j, over the variable
     % horizon w = u_i + v_i + rho_ij + u_j + v_j <= H, and minimizes the neighborhood cost
     %   J_sH = (1/w) * sum over the neighborhood of int_t^{t+w} R_m(s) ds.
-    % In RHCP3 the cost of j is weighted by alpha and the rest by 1 - alpha (Sec. IV-A);
-    % alpha = 0.5 gives the unweighted ED-RHC of Sec. III.
+    % In RHCP3 the cost of j is weighted by alpha and the rest by 1 - alpha (RHC-alpha, Sec.
+    % IV-A). The default is the paper's nominal alpha = 1/|N_i|^2 (N_i includes i), as in the JS
+    % simulator; alpha = 0.5 gives the unweighted RHC method of Sec. III.
     %
     % Transit models (property transit):
     %   "constant speed"  rho_ij = y_ij / maxSpeed, fixed (first-order agents, FO-0; LinearAgent)
     %   "SO"              rho_ij is a decision: the RHCP minimizes energyWeight * E(rho) + J_sH
-    %                     with the energy E(rho) = 12 y^2/rho^3 of the SO speed profile (Theorem 3)
-    %   "FO"              as "SO" with the trapezoid profile, E = 27 y^2/(2 rho^3) (the paper's
-    %                     FO-3, Theorem 5)
-    %   "SO-V", "SO-A",   as "SO" and "FO" with the agent's speed bound maxSpeed (-V) or
-    %   "FO-V", "FO-A"    acceleration bound maxAccel (-A): E(rho) of the bounded minimum-energy
-    %                     profile (Apps. D-E; SecondOrderAgent.transitEnergy), and rho no shorter
-    %                     than the bound allows
+    %                     with the energy E(rho) of the minimum-energy speed profile, 12 y^2/rho^3
+    %                     without limits (Theorem 3)
+    %   "FO"              as "SO" with trapezoid profiles, 27 y^2/(2 rho^3) without limits (the
+    %                     paper's FO-3, Theorem 5)
+    % speedLimit and accelLimit (Inf by default) bound the energy-aware profiles. E(rho) is then
+    % that of the bounded minimum-energy profile (Apps. D-E, generalized to both limits; see
+    % SecondOrderAgent), and rho is no shorter than the limits allow.
     % The energy-aware models are meant for SecondOrderAgent: when the agent leaves, the policy
     % hands it rho_ij and the profile. With a SecondOrderAgent, "constant speed" executes the
     % FO-0 plans with the SO profile over rho = y/maxSpeed (the JS simulator's SO#).
+    % All parameters (alpha, transit, limits, energyWeight, H, ...) are properties, set in
+    % runTrial with 'Policy_<name>'.
     %
     % The RHCPs are solved numerically: each smooth case of the paper's case split (v > 0
     % only after R has been driven to 0) is searched on a grid and refined with fmincon,
     % instead of with the closed forms of the paper's Appendix A. With an energy-aware transit
-    % model rho_ij is a third variable of each case, searched over [0.1 y/maxSpeed, H] (or from
-    % the shortest transit the bound allows).
+    % model rho_ij is a third variable of each case, searched over [0.1 y/maxSpeed, H], or from
+    % the shortest transit the limits allow.
     properties
         alpha = "nominal"    % RHCP3 weight of the next target: "nominal" = 1/|N_i|^2 (N_i
                              % includes i), or a number in [0, 1]; 0.5 = unweighted ED-RHC
-        transit = "constant speed"   % "constant speed", "SO", "FO", "SO-V", "SO-A", "FO-V" or
-                                     % "FO-A" (see above)
+        transit = "constant speed"   % "constant speed", "SO" or "FO" (see above)
+        speedLimit = Inf             % speed limit of the SO / FO profiles
+        accelLimit = Inf             % |acceleration| limit of the SO / FO profiles
         energyWeight = 7.68e-3       % weight of the energy objective int u^2 dt (alpha in eqs. 3
                                      % and 20 of the energy-aware paper): its 213.3e-6 for a
                                      % 600 x 600 space, times 36 for our 100 x 100 canvas;
@@ -76,8 +81,7 @@ classdef EDRHCPolicy < handle
         function obj = EDRHCPolicy(opts)
             arguments
                 opts.Alpha = "nominal"
-                opts.Transit string {mustBeMember(opts.Transit, ["constant speed", "SO", "FO", ...
-                    "SO-V", "SO-A", "FO-V", "FO-A"])} = "constant speed"
+                opts.Transit string {mustBeMember(opts.Transit, ["constant speed", "SO", "FO"])} = "constant speed"
             end
             obj.alpha = opts.Alpha;
             obj.transit = opts.Transit;
@@ -123,7 +127,11 @@ classdef EDRHCPolicy < handle
             obj.states(agent.index) = struct('stage', "travel", 'target', j, 'covered', [], 'hold', false);
             if isprop(agent, 'transitTime')   % hand the planned transit over to the agent
                 agent.transitTime = rho;
-                if obj.transit == "constant speed", agent.transitProfile = "SO"; else, agent.transitProfile = obj.transit; end
+                if obj.transit == "constant speed"
+                    agent.transitProfile = "SO"; agent.transitLimits = [Inf Inf];
+                else
+                    agent.transitProfile = obj.transit; agent.transitLimits = [obj.speedLimit, obj.accelLimit];
+                end
             end
             cmd.kind = "move";
             cmd.targetIdx = j;
@@ -175,11 +183,11 @@ classdef EDRHCPolicy < handle
                     if rho0 > obj.H, continue; end
                     rhoRange = [rho0 rho0];
                 else
-                    vb = agent.state.maxSpeed; ub = agent.state.maxAccel;
-                    rhoRange = [max(obj.minTransit * rho0, SecondOrderAgent.minTransit(obj.transit, y, vb, ub)), obj.H];
+                    rhoRange = [max(obj.minTransit * rho0, ...
+                        SecondOrderAgent.minTransit(y, obj.speedLimit, obj.accelLimit)), obj.H];
                 end
                 d = struct('R', R, 'A', A, 'B', B, 'j', k, 'rho', rho0, 'w', weights, ...
-                    'y', y, 'vb', agent.state.maxSpeed, 'ub', agent.state.maxAccel);
+                    'y', y, 'vb', obj.speedLimit, 'ub', obj.accelLimit);
                 for c = obj.cases(kind, d, uBi, rhoRange(1))
                     [cost, x, rho] = obj.solveCase(d, c, rhoRange);
                     if cost < best.cost

@@ -10,7 +10,8 @@ function smokeTest()
 %    finite agent positions, R >= 0, and at least one agent leaving its start target.
 % 4. Edge cases: a team mixing all agent types and an agent on a target with no edges, under
 %    every policy; Random Walk / Battery Efficient dwell (cmd.dwellSeconds is honoured);
-%    runTrial with the paper preset (Experiments/paper/paperDefaults).
+%    runTrial with the paper preset (Experiments/paper/paperDefaults); ED-ORHC-SO / -FO with
+%    speed and acceleration limits keep every Second-Order Agent within them.
 % Prints one line per check and errors at the end (non-zero exit under -batch) if any failed.
 
 root = fileparts(fileparts(mfilename('fullpath')));
@@ -93,6 +94,26 @@ end
 for name = ["Random Walk", "Battery Efficient"]
     [~, ~, dwelled] = runScenario(@() reportScenario('Dijkstra Corners', {'Default Agent'}), name, 20, true);
     check(dwelled, name + " agents dwell at targets (cmd.dwellSeconds)");
+end
+for name = ["ED-ORHC-SO", "ED-ORHC-FO"]
+    try
+        sim = reportScenario('Dijkstra Corners', {'Second-Order Agent'});
+        sim.setActivePolicy(char(name));
+        pol = sim.policyMap(char(name));
+        pol.speedLimit = 5; pol.accelLimit = 4;
+        sim.resetSimulationState();
+        clock = SimulationClock(20, 0.05);
+        while ~clock.isFinished()
+            dt = clock.tick();
+            sim.step(dt, clock.currentTime);
+            sim.updateTargetsAndLogObjective(clock.currentTime, dt);
+        end
+        vmax = max([sim.agents.peakSpeed]); umax = max([sim.agents.peakAccel]);
+        check(vmax <= 5 + 1e-9 && umax <= 4 + 1e-9 && any([sim.agents.Je] > 0), ...
+            sprintf('%s with limits 5 (speed) and 4 (acceleration): peaks %.3f, %.3f', name, vmax, umax));
+    catch err
+        check(false, name + " with limits  ERROR " + err.message);
+    end
 end
 
 if isempty(failures)
