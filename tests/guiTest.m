@@ -17,7 +17,7 @@ classdef guiTest < matlab.uitest.TestCase
             tc.outDir = fullfile(tc.root, 'results', 'gui');
             if ~isfolder(tc.outDir), mkdir(tc.outDir); end
             rng(0);
-            tc.ui = MainUI('Monitor', secondaryMonitor());
+            tc.ui = MainUI('Monitor', MainUI.secondaryMonitor());
             tc.addTeardown(@() closeUI(tc.ui));
         end
     end
@@ -31,7 +31,7 @@ classdef guiTest < matlab.uitest.TestCase
 
         function opensOnRequestedMonitor(tc)
             mons = get(groot, 'MonitorPositions');
-            m = mons(secondaryMonitor(), :);
+            m = mons(MainUI.secondaryMonitor(), :);
             drawnow;
             for f = [tc.ui.fig, tc.ui.objectiveWin.fig]
                 p = f.Position;
@@ -64,6 +64,25 @@ classdef guiTest < matlab.uitest.TestCase
             tops = arrayfun(@(t) sum(t.barFrameHandle.Position([2 4])), m.targets);
             tc.verifyLessThanOrEqual(max(tops), 100, 'bars stay inside the canvas');
             snap(tc, 'report_layout_after_60s');
+        end
+
+        function guiAndHeadlessRunsAgree(tc)
+            % The same scenario run through the GUI and through runTrial gives the same J(T).
+            % Battery Efficient without its dwell is deterministic.
+            T = 60;
+            tc.ui.loadLayout(fullfile(tc.root, 'Configurations', 'ReportLayout.mat'));
+            tc.choose(tc.ui.policyDropdown, 'Battery Efficient');
+            pol = tc.ui.model.policyMap('Battery Efficient');
+            pol.dwellRange = [0 0];
+            tc.type(tc.ui.endTimeField, T);
+            tc.press(button(tc, 'Run to End'));
+            Jgui = tc.ui.model.cumUncertaintyIntegral / tc.ui.clock.currentTime;
+            p = paperDefaults();
+            p.EndTime = T;
+            p.Policy_dwellRange = [0 0];
+            p.Log = false;
+            out = runTrial(p);
+            tc.verifyEqual(Jgui, out.finalJ, 'RelTol', 1e-12);
         end
 
         function playsPausesAndResets(tc)
@@ -163,14 +182,6 @@ classdef guiTest < matlab.uitest.TestCase
             exportapp(tc.ui.objectiveWin.fig, fullfile(tc.outDir, [name '_objective.png']));
         end
     end
-end
-
-function k = secondaryMonitor()
-% A monitor other than the primary one (whose origin is [1 1]), so test windows stay off the
-% main screen; 1 when there is only one monitor
-mons = get(groot, 'MonitorPositions');
-k = find(mons(:, 1) ~= 1 | mons(:, 2) ~= 1, 1);
-if isempty(k), k = 1; end
 end
 
 function closeUI(ui)

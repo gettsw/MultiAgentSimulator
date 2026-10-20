@@ -85,11 +85,39 @@ matlab -batch "addpath(genpath(pwd)); smokeTest"
 ```
 `tests/smokeTest.m` checks the defaults and the layout file round trip, then runs every registered policy x path planner x agent type for 20 s on `ReportLayout.mat` and checks that each run finishes with a finite objective `J`. It prints one line per check and exits with an error if any check fails (about 20 s). New components registered in `ComponentRegistry` are picked up automatically.
 
-`tests/guiTest.m` drives the real GUI with MATLAB's App Testing Framework: it loads `ReportLayout.mat` over the lab background and runs to the end, plays, pauses and resets, saves, clears and reloads a layout, and builds a small scenario by clicking. It needs a display; the windows open on a secondary monitor if there is one and close when it finishes (about 50 s):
+`tests/guiTest.m` drives the real GUI with MATLAB's App Testing Framework: it loads `ReportLayout.mat` over the lab background and runs to the end, plays, pauses and resets, saves, clears and reloads a layout, builds a small scenario by clicking, and checks that a GUI run and a headless `runTrial` give the same `J`. It needs a display; the windows open on a secondary monitor if there is one and close when it finishes (about 50 s):
 ```
 matlab -batch "addpath(genpath(pwd)); assertSuccess(runtests('guiTest'))"
 ```
 Screenshots of each stage are written to `results/gui/` (git-ignored).
+
+## Headless experiments
+
+`Experiments/runTrial(params)` runs one simulation without the GUI. Unset parameters take the values in `Experiments/trialDefaults.m`; component parameters take any `ComponentRegistry` name:
+
+```matlab
+out = runTrial(struct('Layout', "ReportLayout.mat", 'AgentStarts', "layout", ...
+    'Policy', "Battery Efficient", 'Planner', "Energy Efficient", 'AgentType', "Energy Agent", ...
+    'UncertaintyMode', "Static Uniform", 'A_base', 1, 'B', 10, 'EndTime', 500, 'Seed', 1, 'Log', true));
+```
+
+- `AgentStarts`: `"auto"` (spread evenly), `"layout"` (the start targets stored in the layout file), or target indices such as `[1 5]`.
+- `Seed`: the `rng` seed set before simulating (`-1`, the default, leaves `rng` as it is).
+- `Policy_<property>`: sets a property of the active policy, e.g. `'Policy_dwellRange', [0 0]` turns off the Random Walk or Battery Efficient dwell.
+- `Log = true`: `out.log` holds the per-step time, `J(t)`, agent positions, velocities, accelerations, headings, SOC and energy; `out.metrics` holds per-agent path length `L`, heading change `Θ`, integrated squared acceleration `E_a`, final SOC and energy (`Experiments/metrics/`).
+
+`Experiments/runSweep(grid)` runs every combination of parameter values, and `analyzeResults` compares the variants.
+
+## Paper results
+
+`PaperResults.mlx` (repository root) regenerates every result of the simulator paper: Table I from the code, Tables II–IV and Figs. 10–13 from headless runs, and the GUI figures (Figs. 2, 3, 5–9 and 12) from `MainUI`. Open it and click **Run All**, or run it without the Live Editor to get a PDF report of everything:
+```
+matlab -batch "addpath(genpath(pwd)); exportPaperResults"
+matlab -batch "addpath(genpath(pwd)); exportPaperResults(Quick=true)"
+```
+The full run (500 s runs, 4 seeds) takes about ten minutes and writes to `results/paper/`; `Quick=true` (60 s runs, 2 seeds, about 80 s) writes to `results/paper_quick/`. The output folder holds `PaperResults.pdf`, `runs.csv` (every run), `comparison.csv`, LaTeX tables and `macros.tex` for the paper to `\input`, and `figures/` (PNG; the plots also as PDF).
+
+The experiments are defined in `Experiments/paper/paperDefaults.m` (the reference scenario) and `Experiments/paper/paperConditions.m` (what each experiment varies). The live script is binary, so it is built from a plain-text source: edit `Experiments/paper/paperResultsSource.m` and run `buildPaperResults`.
 
 ## Adding a new modular class
 
