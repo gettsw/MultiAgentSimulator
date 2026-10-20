@@ -19,9 +19,10 @@ classdef ObjectivePlotWindow < handle
     end
     
     methods
-        function obj = ObjectivePlotWindow()
+        function obj = ObjectivePlotWindow(position)
+            if nargin < 1, position = [1350 200 700 450]; end
             obj.fig = uifigure('Name','Objective Function J(t)', ...
-                'Position',[1350 200 700 450]);
+                'Position', position);
             obj.ax = uiaxes(obj.fig, 'Position',[60 70 610 340]);
             grid(obj.ax,'on');
             title(obj.ax,'Time-Averaged Objective');

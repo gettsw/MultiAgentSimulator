@@ -19,6 +19,7 @@ if ~isfile(layoutFile), layoutFile = fullfile(root, 'Configurations', layoutFile
 tmp = load(layoutFile, 's');
 model = ScenarioModel([], @(idx, pos, sp) LinearAgent(idx, pos, sp));
 model.importLayout(tmp.s);
+model.agents = [];   % trial parameters place the agents, not the layout's stored starts
 for t = model.targets
     t.configure(p);
 end
