@@ -14,6 +14,7 @@ classdef ScenarioModel < handle
         pathPlanner
         agentFactory
         bounds = [0 100 0 100]  % [xMin xMax yMin yMax]
+        detectionRadius = 1.2   % an agent closer than this to a target services it
     end
 
     properties (Constant)
@@ -92,14 +93,13 @@ classdef ScenarioModel < handle
             if isempty(obj.agents), return; end
 
             % 1. UPDATE RESIDING AGENTS AT TARGETS FIRST
-            detectionRadius = 1.2;
             if ~isempty(obj.targets)
                 for t = 1:numel(obj.targets)
                     nearby = [];
                     for a_idx = 1:numel(obj.agents)
                         a = obj.agents(a_idx);
                         distToTarget = norm(a.state.pos - obj.targets(t).position);
-                        if distToTarget < detectionRadius
+                        if distToTarget < obj.detectionRadius
                             if isempty(nearby), nearby = a; else, nearby(end+1) = a; end
                         end
                     end
@@ -118,11 +118,7 @@ classdef ScenarioModel < handle
             % 3. UPDATE AGENT STATES AND EXECUTE POLICIES
             for k = 1:numel(obj.agents)
                 a = obj.agents(k);
-                if isprop(a, 'dwellRemaining') && a.dwellRemaining > 0
-                    a.dwellRemaining = max(0, a.dwellRemaining - dtSim);
-                    continue;
-                end
-                if isempty(a.path)
+                if a.dwellRemaining <= 0 && isempty(a.path)
                     adj = obj.buildAdjacency();
                     cmd = obj.policy.plan(a, obj, adj, a.current_target_idx, simTime);
                     % Policies return struct() (no 'kind') when the agent has nowhere to go
@@ -142,8 +138,23 @@ classdef ScenarioModel < handle
                         end
                     end
                 end
-                a.update(dtSim);
+                if a.dwellRemaining > 0
+                    % Dwelling: hold at the current target before following the new path
+                    a.dwellRemaining = max(0, a.dwellRemaining - dtSim);
+                    obj.holdAgent(a, dtSim);
+                else
+                    a.update(dtSim);
+                end
             end
+        end
+
+        function holdAgent(~, a, dtSim)
+            % An idle update with the path set aside: the agent brakes (zero commanded
+            % acceleration) and an EnergyAgent keeps drawing its idle power
+            path = a.path;
+            a.path = [];
+            a.update(dtSim);
+            a.path = path;
         end
 
         function [uNow, JNow] = updateTargetsAndLogObjective(obj, simTime, dtSim)
