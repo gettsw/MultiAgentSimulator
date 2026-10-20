@@ -107,7 +107,7 @@ classdef MainUI < handle
             place(uibutton(p,'Text','Load Layout...', ...
                 'ButtonPushedFcn', @(~,~)obj.onLoadLayout()), 5, 2);
 
-            place(uilabel(p,'Text','Agent Accel:'), 6, 1);
+            place(uilabel(p,'Text','Agent Speed:'), 6, 1);   % max speed of agents added next
             obj.speedField = place(uieditfield(p,'numeric','Value',15,'Limits',[0.01 Inf]), 6, 2);
 
             place(uilabel(p,'Text','Path Planner:'), 7, 1);
@@ -122,11 +122,11 @@ classdef MainUI < handle
                 'Value', 'Random Walk', ...
                 'ValueChangedFcn', @(s,~)obj.onPolicyChanged(s.Value)), 9, [1 2]);
 
-            % Dynamic vs. Static Uncertainty Selector
+            % Uncertainty mode: constant A_i by default (as in the paper); spikes are opt-in
             place(uilabel(p,'Text','Uncertainty:', 'FontWeight','bold'), 10, [1 2]);
             obj.uncertaintyDropdown = place(uidropdown(p, ...
-                'Items', {'Dynamic Uncertainty', 'Static Priority Target', 'Static Uniform'}, ...
-                'Value', 'Dynamic Uncertainty', ...
+                'Items', ScenarioModel.UncertaintyModes, ...
+                'Value', 'Static Uniform', ...
                 'ValueChangedFcn', @(s,~)obj.onUncertaintyModeChanged(s.Value)), 11, [1 2]);
 
             obj.modeLabel = place(uilabel(p,'Text','Mode: idle', 'FontWeight','bold'), 12, [1 2]);
@@ -305,6 +305,9 @@ classdef MainUI < handle
             if isequal(f,0), return; end
             tmp = load(fullfile(d,f), 's');
             obj.model.importLayout(tmp.s);
+            % The layout may carry its uncertainty mode and agents; show them in the controls
+            obj.uncertaintyDropdown.Value = obj.model.uncertaintyMode;
+            if ~isempty(obj.model.agents), obj.speedField.Value = obj.model.agents(1).state.maxSpeed; end
             obj.renderer.clearAxes();
             obj.renderer.renderAll(obj.model);
             obj.onResetSimulation();

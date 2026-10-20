@@ -16,13 +16,13 @@ classdef Target < handle
         % Uncertainty state
         R                    % Uncertainty state
         A                    % Dynamic growth rate A(t)
-        B = 20.0             % Base decay rate per agent
+        B = 10.0             % Decay rate per agent (paper default)
         lastVisitedTime = 0  % Timestamp when an agent last visited/cleared uncertainty
         % Dynamic Spike Parameters (Scenario C)
         A_base = 1.0          % Baseline growth rate for the active mode (set each step)
         A_priorityBase = 1.0  % Baseline when target 1 is the high-priority target
         A_uniformBase = 1.0   % Baseline for every target in 'Static Uniform'
-        A_spike = 28.0        % Emergency spike growth rate (1 agent: +8 net, 2 agents: -12 net)
+        A_spike = 28.0        % Emergency spike growth rate; net rate with n agents is A_spike - n*B
         spikeInterval = 250.0 % Total cycle repeat time (5 targets * 50s step = 250s)
         spikeDuration = 10.0  % Active window duration of spike (seconds)
         spikePhaseOffset = 0  % Stagger offset (seconds)
@@ -42,10 +42,13 @@ classdef Target < handle
         B_val
     end
 
+    properties (SetAccess = private)
+        initialR = 0         % R(0), restored on reset (set from layouts by setRates)
+    end
+
     properties (Access = private)
         prevAgentIDs
         % Store initial state for reset
-        initialR
         initialA
         initialB
         initialColor
@@ -74,7 +77,7 @@ classdef Target < handle
             obj.barFrameHandle = [];
 
             obj.R = 0;
-            obj.B = 20.0;
+            obj.B = 10.0;
 
             % --- Scenario C Configuration (40s Delay Between Spikes) ---
             obj.A_base = 1.0;
@@ -109,7 +112,7 @@ classdef Target < handle
 
         function updateGrowthRate(obj, globalTime, uncertaintyMode)
             % Evaluates dynamic growth rate A(t) based on periodic spike windows
-            if nargin < 3, uncertaintyMode = 'Dynamic Uncertainty'; end
+            if nargin < 3, uncertaintyMode = 'Static Uniform'; end
             [obj.A, obj.A_base] = obj.growthRateAt(globalTime, uncertaintyMode);
         end
 
@@ -139,7 +142,7 @@ classdef Target < handle
 
         function updateUncertainty(obj, dt, globalTime, uncertaintyMode)
             if nargin < 4
-                uncertaintyMode = 'Dynamic Uncertainty';
+                uncertaintyMode = 'Static Uniform';
             end
 
             % Update growth rate (constant A_base for Static, spiking for Dynamic)
@@ -177,6 +180,20 @@ classdef Target < handle
             end
             obj.A_base = obj.A_priorityBase;
             obj.A = obj.A_base;
+        end
+
+        function setRates(obj, A, B, R0)
+            % Per-target parameters stored in layout files (ScenarioModel.importLayout); [] keeps
+            % the current value. A is the base growth rate A_i: the 'Static Uniform' rate, and the
+            % baseline of the other modes for every target except the priority target 1.
+            if ~isempty(A)
+                obj.A_uniformBase = A;
+                if obj.index ~= 1, obj.A_priorityBase = A; end
+                obj.A_base = obj.A_priorityBase;
+                obj.A = obj.A_base;
+            end
+            if ~isempty(B), obj.B = B; obj.initialB = B; end
+            if ~isempty(R0), obj.R = R0; obj.initialR = R0; end
         end
 
         function updateBar(obj)

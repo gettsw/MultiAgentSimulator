@@ -10,10 +10,14 @@ classdef ScenarioModel < handle
         hasLastSample = false
         policyMap               % name -> persistent policy instance (experiments read stats off these)
         activePolicy = 'Random Walk'
-        uncertaintyMode = 'Dynamic Uncertainty' % Added for Dynamic vs. Static support
+        uncertaintyMode = 'Static Uniform'      % constant A_i, as in the paper; see UncertaintyModes
         pathPlanner
         agentFactory
         bounds = [0 100 0 100]  % [xMin xMax yMin yMax]
+    end
+
+    properties (Constant)
+        UncertaintyModes = {'Static Uniform', 'Static Priority Target', 'Dynamic Uncertainty'}
     end
 
     properties (Dependent)
@@ -54,6 +58,9 @@ classdef ScenarioModel < handle
 
         function setUncertaintyMode(obj, mode)
             if ischar(mode) || isstring(mode)
+                % Target treats any unknown name as a spiking mode, so reject typos here
+                assert(any(strcmp(char(mode), obj.UncertaintyModes)), ...
+                    'ScenarioModel:UnknownMode', 'Unknown uncertainty mode "%s"', char(mode));
                 obj.uncertaintyMode = char(mode);
             end
         end
@@ -182,16 +189,34 @@ classdef ScenarioModel < handle
                 s.edges = [s.edges; ids];
             end
             s.walls = obj.walls;
+            % Scenario fields below are optional on import, so older layout files still load
+            s.agentStarts = arrayfun(@(a) a.initialTargetIdx, obj.agents);   % target index per agent
+            s.agentSpeed = arrayfun(@(a) a.state.maxSpeed, obj.agents);      % max speed per agent
+            s.uncertaintyMode = obj.uncertaintyMode;
+            s.A = [obj.targets.A_uniformBase].';   % base growth rate A_i per target
+            s.B = [obj.targets.B].';               % decay rate B_i per agent, per target
+            s.R0 = [obj.targets.initialR].';       % initial uncertainty R_i(0) per target
         end
 
         function importLayout(obj, s)
+            % Fields missing from older files keep their defaults; A, B, R0 and agentSpeed may
+            % also be scalars that apply to every target / agent
             obj.clearAll();
             for k = 1:size(s.targets, 1)
-                obj.addTarget(s.targets(k,:));
+                t = obj.addTarget(s.targets(k,:));
+                t.setRates(layoutValue(s, 'A', k), layoutValue(s, 'B', k), layoutValue(s, 'R0', k));
             end
             if isfield(s, 'walls'), obj.walls = s.walls; end
             for k = 1:size(s.edges, 1)
                 obj.addEdgeByTargets(double(s.edges(k,1)), double(s.edges(k,2)));
+            end
+            if isfield(s, 'uncertaintyMode'), obj.setUncertaintyMode(s.uncertaintyMode); end
+            if isfield(s, 'agentStarts')
+                for k = 1:numel(s.agentStarts)
+                    speed = layoutValue(s, 'agentSpeed', k);
+                    if isempty(speed), speed = 15; end   % GUI default speed
+                    obj.addAgentOnTarget(obj.targets(s.agentStarts(k)).position, speed, 1e-6);
+                end
             end
         end
 
@@ -264,4 +289,12 @@ classdef ScenarioModel < handle
         end
 
     end
+end
+
+function v = layoutValue(s, name, k)
+% Element k of an optional layout field: [] when absent, the value itself when scalar
+v = [];
+if ~isfield(s, name) || isempty(s.(name)), return; end
+v = s.(name);
+if ~isscalar(v), v = v(k); end
 end
