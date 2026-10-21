@@ -64,7 +64,7 @@ rows = {
     "Maximum acceleration",                "a_max",        sprintf('%g m/s^2', agent.state.maxAccel)
     "PD gains",                            "K_p, K_d",     sprintf('%g, %g', ctrl.kp, ctrl.kd)
     "Turn penalty (energy-efficient planner)", "kappa",    sprintf('%g', EnergyEfficientPlanner().turnPenalty)
-    "Dwell, random walk",                  "tau_dwell",    sprintf('U(%g, %g) s', rw.dwellRange)
+    "Dwell, random walk",                  "tau_dwell",    sprintf('U(%g, %g) x time to empty the target', rw.dwellScale * (1 - rw.dwellSpread), rw.dwellScale * (1 + rw.dwellSpread))
     "Dwell, battery efficient",            "tau_dwell",    sprintf('U(%g, %g) s; U(%g, %g) s below %g%% SOC', be.dwellRange, be.lowBatteryDwellRange, be.criticalBatteryThreshold)
     "Motion power",                        "P_0, alpha, gamma", sprintf('%g W, %.4g, %g', EnergyAgent.P0_BASE_MOTION, EnergyAgent.ALPHA_VEL, EnergyAgent.GAMMA_ACC)
     "Processor power (moving, idle)",      "P_cpu",        sprintf('%g W, %g W', EnergyAgent.CPU_MOVE, EnergyAgent.CPU_IDLE)

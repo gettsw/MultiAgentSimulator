@@ -91,6 +91,14 @@ matlab -batch "addpath(genpath(pwd)); assertSuccess(runtests('guiTest'))"
 ```
 Screenshots of each stage are written to `results/gui/` (git-ignored).
 
+## Random Walk
+
+`Random Walk` (`Components/AgentPolicy/RandomWalkPolicy.m`) is the baseline policy. It uses the same event-driven structure as ED-RHC, but an agent acts only at two of its own events:
+- **On arrival**, it dwells for a uniform random time between 0.8 and 1.2 times the time to empty its target, `R_i / (N_i B_i - A_i)`. Here `N_i` counts the agents already there, which are assumed to stay; they keep their own plans.
+- **When the dwell ends**, it moves to a neighbor chosen uniformly at random.
+
+Agents may share targets. During a spike that the agents present cannot overcome, the target's baseline growth rate is used instead. The parameters are `dwellSpread` (default 0.2) and `dwellScale` (default 1; 0 means no dwell).
+
 ## Event-driven receding horizon control (ED-RHC)
 
 `ED-RHC` (`Components/AgentPolicy/EDRHCPolicy.m`) implements the distributed event-driven receding horizon controller of S. Welikala and C. G. Cassandras, "Event-driven receding horizon control for distributed persistent monitoring in network systems", *Automatica* 127 (2021) 109519.
@@ -146,7 +154,7 @@ out = runTrial(struct('Layout', "ReportLayout.mat", 'AgentStarts', "layout", ...
 
 - `AgentStarts`: `"auto"` (spread evenly), `"layout"` (the start targets stored in the layout file), or target indices such as `[1 5]`.
 - `Seed`: the `rng` seed set before simulating (`-1`, the default, leaves `rng` as it is).
-- `Policy_<property>`: sets a property of the active policy, e.g. `'Policy_dwellRange', [0 0]` turns off the Random Walk or Battery Efficient dwell.
+- `Policy_<property>`: sets a property of the active policy, e.g. `'Policy_dwellScale', 0` turns off the Random Walk dwell and `'Policy_dwellRange', [0 0]` the Battery Efficient dwell.
 - `Log = true`: `out.log` holds the per-step time, `J(t)`, agent positions, velocities, accelerations, headings, SOC, battery energy and `J_e` (Second-Order Agents); `out.metrics` holds per-agent path length `L`, heading change `Θ`, integrated squared acceleration `E_a`, final SOC and energy (`Experiments/metrics/`).
 
 `Experiments/runSweep(grid)` runs every combination of parameter values, and `analyzeResults` compares the variants.

@@ -26,7 +26,8 @@ switch name
 end
 if opts.NoDwell
     for k = 1:numel(params)
-        params{k}.Policy_dwellRange = [0 0];
+        params{k}.Policy_dwellRange = [0 0];   % Battery Efficient
+        params{k}.Policy_dwellScale = 0;       % Random Walk
     end
 end
 cond = struct('Label', num2cell(labels), 'Params', params);

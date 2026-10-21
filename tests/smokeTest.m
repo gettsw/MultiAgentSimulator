@@ -9,7 +9,7 @@ function smokeTest()
 %    scenario (Configurations/ReportLayout.mat, 5 agents) without error, with a finite J,
 %    finite agent positions, R >= 0, and at least one agent leaving its start target.
 % 4. Edge cases: a team mixing all agent types and an agent on a target with no edges, under
-%    every policy; Random Walk / Battery Efficient dwell (cmd.dwellSeconds is honoured);
+%    every policy; Random Walk (clearing dwell) and Battery Efficient (cmd.dwellSeconds) dwell;
 %    runTrial with the paper preset (Experiments/paper/paperDefaults); ED-ORHC-SO / -FO with
 %    speed and acceleration limits keep every Second-Order Agent within them.
 % Prints one line per check and errors at the end (non-zero exit under -batch) if any failed.
@@ -93,7 +93,7 @@ catch err
 end
 for name = ["Random Walk", "Battery Efficient"]
     [~, ~, dwelled] = runScenario(@() reportScenario('Dijkstra Corners', {'Default Agent'}), name, 20, true);
-    check(dwelled, name + " agents dwell at targets (cmd.dwellSeconds)");
+    check(dwelled, name + " agents dwell at targets");
 end
 for name = ["ED-ORHC-SO", "ED-ORHC-FO"]
     try
