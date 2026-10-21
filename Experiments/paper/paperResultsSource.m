@@ -48,34 +48,34 @@ parameters = paperTables("parameters", base, seeds)
 showImages([paperGuiFigures("setup", figDir); paperGuiFigures("overview", figDir)]);
 
 %% Table II and Figs. 10-11: movement policies
-% Random Walk vs Battery Efficient, with the Dijkstra Corners planner and Default Agents.
+% Random Walk vs Battery Efficient, with the Dijkstra Corners planner and Physical Agents.
 policy = paperRuns(base, paperConditions("policy"), seeds);
 paperTables("policy", policy)
 paperPlots("objective", policy, fullfile(figDir, "fig10_objective_random_walk"), Condition="Random Walk");
 paperPlots("objective", policy, fullfile(figDir, "fig11_objective_battery_efficient"), Condition="Battery Efficient");
 
 %% Table III and Fig. 12: path planners
-% Dijkstra Corners vs Energy Efficient, with the Battery Efficient policy and Default Agents.
+% Dijkstra Corners vs Energy Efficient, with the Battery Efficient policy and Physical Agents.
 % L, Theta, and E_a are summed over the five agents; all values are means over the runs.
 planner = paperRuns(base, paperConditions("planner"), seeds);
 paperTables("planner", planner)
 showImages(paperGuiFigures("planners", figDir));
 
-%% Table IV and Fig. 13: Energy Agents
-% Both planners again, with Energy Agents. SOC is the mean over agents and runs; Energy is the
+%% Table IV and Fig. 13: battery
+% Both planners again, with the agents' batteries. SOC is the mean over agents and runs; Energy is the
 % team's energy drawn from the batteries, averaged over the runs.
 battery = paperRuns(base, paperConditions("battery"), seeds);
 paperTables("battery", battery)
 paperPlots("soc", battery, fullfile(figDir, "fig13_soc"));
 
 %% Fig. 3: a run in the GUI
-% |Configurations/ExampleLayout1.mat| with four Energy Agents and the Battery Efficient policy,
+% |Configurations/ExampleLayout1.mat| with four Physical Agents and the Battery Efficient policy,
 % captured at six times.
 showImages(paperGuiFigures("reel", figDir, EndTime=base.EndTime));
 
 %% Figs. 5-8: agent types and policies in the GUI
-% |ExampleLayout1.mat| after several runs, with Default Agents and Random Walk (Figs. 5 and 7)
-% and with Energy Agents and Battery Efficient (Figs. 6 and 8).
+% |ExampleLayout1.mat| after several runs, with Physical Agents and Random Walk (Figs. 5 and 7)
+% and with Physical Agents and Battery Efficient (Figs. 6 and 8).
 showImages(paperGuiFigures("examples", figDir, EndTime=base.EndTime, Runs=numel(seeds)));
 
 %% Check against the draft

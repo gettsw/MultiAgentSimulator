@@ -1,9 +1,9 @@
 function cond = paperConditions(name, opts)
 % Conditions of the simulator paper's experiments (Sec. IV), as input to paperRuns. Each
-% condition overrides paperDefaults (Battery Efficient, Dijkstra Corners, Default Agent):
+% condition overrides paperDefaults (Battery Efficient, Dijkstra Corners, Physical Agent):
 %   "policy"   Table II, Figs. 10-11: Random Walk vs Battery Efficient
 %   "planner"  Table III, Fig. 12: Dijkstra Corners vs Energy Efficient (Battery Efficient)
-%   "battery"  Table IV, Fig. 13: as "planner" with Energy Agents
+%   "battery"  Table IV, Fig. 13: as "planner" (every agent now carries a battery)
 % NoDwell = true sets the policies' dwell to zero, which recreates the conditions of the draft's
 % runs (made before ScenarioModel honoured cmd.dwellSeconds).
 arguments
@@ -19,8 +19,8 @@ switch name
         params = {struct('Planner', "Dijkstra Corners"), struct('Planner', "Energy Efficient")};
     case "battery"
         labels = ["Dijkstra", "Energy Efficient"];
-        params = {struct('Planner', "Dijkstra Corners", 'AgentType', "Energy Agent"), ...
-                  struct('Planner', "Energy Efficient", 'AgentType', "Energy Agent")};
+        params = {struct('Planner', "Dijkstra Corners", 'AgentType', "Physical Agent"), ...
+                  struct('Planner', "Energy Efficient", 'AgentType', "Physical Agent")};
     otherwise
         error('paperConditions:UnknownName', 'Unknown experiment "%s"', name);
 end

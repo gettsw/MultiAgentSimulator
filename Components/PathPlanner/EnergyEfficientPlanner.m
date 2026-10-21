@@ -1,6 +1,6 @@
 classdef EnergyEfficientPlanner < DijkstraCornerPlanner
     % Minimizes distance + turning penalty so paths favor gentler bends,
-    % reducing the acceleration-squared term in EnergyAgent power draw.
+    % reducing the acceleration-squared term in the agents' battery power draw.
     properties
         turnPenalty double = 8.0   % cost per radian of heading change (same units as distance)
     end

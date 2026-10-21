@@ -3,8 +3,10 @@ function out = runTrial(params)
 % Called by runSweep (grids of trials), the diagnostic scripts, and the paper experiments
 % (Experiments/paper). Parameters: see trialDefaults. With params.Log = true the output also
 % holds out.log (per-step time, J(t), target uncertainties R, agent states, SOC and energy) and out.metrics
-% (trialMetrics: path length, heading change, acceleration cost, final SOC per agent). With
-% SecondOrderAgents out also holds the energy-aware RHC metrics Je, JT, vmax and umax.
+% (trialMetrics: path length, heading change, acceleration cost, final SOC per agent). out also
+% holds the energy-aware RHC metrics Je, JT, vmax and umax. Parameters named Agent_<property>
+% set that property on every agent (or on its state or controller), e.g. 'Agent_profile', "SO",
+% 'Agent_maxAccel', 10, 'Agent_kp', 16.
 
 p = withDefaults(params);
 root = fileparts(fileparts(mfilename('fullpath')));
@@ -45,6 +47,21 @@ for k = 1:p.NumAgents
 end
 
 model.setActivePolicy(char(p.Policy));
+
+% Parameters named Agent_<property> set that property on every agent, its state or controller
+f = fieldnames(p);
+for i = 1:numel(f)
+    if startsWith(f{i}, 'Agent_')
+        name = extractAfter(f{i}, 'Agent_');
+        for a = model.agents
+            if isprop(a, name), a.(name) = p.(f{i});
+            elseif isprop(a.state, name), a.state.(name) = p.(f{i});
+            elseif isprop(a.controller, name), a.controller.(name) = p.(f{i});
+            else, error('runTrial:AgentProperty', 'Agents have no property "%s"', name);
+            end
+        end
+    end
+end
 
 % Parameters named Policy_<property> set that property on the active policy (ablations).
 % A switch only some policies have (e.g. Joint-only) is skipped for the others, so one sweep
@@ -104,8 +121,8 @@ slopeJ = c(1);
 
 out = struct('finalJ', finalJ, 'steadyJ', steadyJ, 'slopeJ', slopeJ, ...
     'peakR', peakR, 'coLocationTime', coLocationTime, 'policy', pol);
-% Energy-aware RHC metrics (paper eqs. 3 and 73), from agents that track int u^2 dt
-% (SecondOrderAgent); NaN otherwise. Js = finalJ; JT = energyWeight * Je + Js.
+% Energy-aware RHC metrics (paper eqs. 3 and 73): Je = sum of int |u|^2 dt (NaN when an agent
+% used a "constant" profile), peak speed and acceleration; Js = finalJ; JT = energyWeight * Je + Js.
 out.Je = NaN; out.JT = NaN; out.vmax = NaN; out.umax = NaN;
 if ~isempty(model.agents) && all(arrayfun(@(a) isprop(a, 'Je'), model.agents))
     out.Je = sum([model.agents.Je]);

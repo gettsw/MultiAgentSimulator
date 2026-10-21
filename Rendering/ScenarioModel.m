@@ -14,7 +14,9 @@ classdef ScenarioModel < handle
         pathPlanner
         agentFactory
         bounds = [0 100 0 100]  % [xMin xMax yMin yMax]
-        detectionRadius = 1.2   % an agent closer than this to a target services it
+        detectionRadius = 1.2   % an agent at rest (not in transit) this close to a target services it
+        agentAccel = 15         % maxAccel of agents added next
+        agentProfile = "constant"   % speed profile of agents added next ("constant", "SO", "FO")
     end
 
     properties (Constant)
@@ -29,7 +31,7 @@ classdef ScenarioModel < handle
         function obj = ScenarioModel(pathPlanner, agentFactory)
             if nargin < 1 || isempty(pathPlanner), pathPlanner = DijkstraCornerPlanner(); end
             if nargin < 2 || isempty(agentFactory)
-                agentFactory = @(idx, pos, sp) DefaultAgent(idx, pos, sp);
+                agentFactory = @(idx, pos, sp) AbstractAgent(idx, pos, sp);
             end
             obj.pathPlanner  = pathPlanner;
             obj.agentFactory = agentFactory;
@@ -93,11 +95,15 @@ classdef ScenarioModel < handle
             if isempty(obj.agents), return; end
 
             % 1. UPDATE RESIDING AGENTS AT TARGETS FIRST
+            % Only agents at rest service a target: arrived (no path) or waiting to leave (a
+            % dwell before a new path). Agents in transit service nothing, even when they pass
+            % close to a target; detectionRadius is the tolerance for "at the target".
             if ~isempty(obj.targets)
                 for t = 1:numel(obj.targets)
                     nearby = [];
                     for a_idx = 1:numel(obj.agents)
                         a = obj.agents(a_idx);
+                        if ~isempty(a.path) && a.dwellRemaining <= 0, continue; end   % in transit
                         distToTarget = norm(a.state.pos - obj.targets(t).position);
                         if distToTarget < obj.detectionRadius
                             if isempty(nearby), nearby = a; else, nearby(end+1) = a; end
@@ -153,8 +159,8 @@ classdef ScenarioModel < handle
         end
 
         function holdAgent(~, a, dtSim)
-            % An idle update with the path set aside: the agent brakes (zero commanded
-            % acceleration) and an EnergyAgent keeps drawing its idle power
+            % An idle update with the path set aside: the agent stays at the target and keeps
+            % drawing its idle battery power
             path = a.path;
             a.path = [];
             a.update(dtSim);
@@ -212,6 +218,8 @@ classdef ScenarioModel < handle
             % Scenario fields below are optional on import, so older layout files still load
             s.agentStarts = arrayfun(@(a) a.initialTargetIdx, obj.agents);   % target index per agent
             s.agentSpeed = arrayfun(@(a) a.state.maxSpeed, obj.agents);      % max speed per agent
+            s.agentAccel = arrayfun(@(a) a.state.maxAccel, obj.agents);      % max acceleration per agent
+            s.agentProfile = arrayfun(@(a) a.profile, obj.agents);           % speed profile per agent
             s.uncertaintyMode = obj.uncertaintyMode;
             s.A = [obj.targets.A_uniformBase].';   % base growth rate A_i per target
             s.B = [obj.targets.B].';               % decay rate B_i per agent, per target
@@ -235,7 +243,11 @@ classdef ScenarioModel < handle
                 for k = 1:numel(s.agentStarts)
                     speed = layoutValue(s, 'agentSpeed', k);
                     if isempty(speed), speed = 15; end   % GUI default speed
-                    obj.addAgentOnTarget(obj.targets(s.agentStarts(k)).position, speed, 1e-6);
+                    a = obj.addAgentOnTarget(obj.targets(s.agentStarts(k)).position, speed, 1e-6);
+                    accel = layoutValue(s, 'agentAccel', k);
+                    if ~isempty(accel), a.state.maxAccel = accel; end
+                    prof = layoutValue(s, 'agentProfile', k);
+                    if ~isempty(prof), a.profile = prof; end
                 end
             end
         end
@@ -250,6 +262,8 @@ classdef ScenarioModel < handle
             [tIdx, dist] = obj.findNearestTarget(clickPos);
             if isempty(tIdx) || dist > tol, msg = "Click near target"; return; end
             a = obj.agentFactory(numel(obj.agents)+1, obj.targets(tIdx).position, speed);
+            a.state.maxAccel = obj.agentAccel;
+            a.profile = obj.agentProfile;
             a.current_target_idx = tIdx;
             a.initialTargetIdx = tIdx;
             a.initialPosition = a.state.pos;

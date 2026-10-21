@@ -70,6 +70,8 @@ classdef guiTest < matlab.uitest.TestCase
             % The same scenario run through the GUI and through runTrial gives the same J(T).
             % Battery Efficient without its dwell is deterministic.
             T = 60;
+            p = paperDefaults();
+            tc.choose(tc.ui.agentTypeDropdown, char(p.AgentType));   % same agents as runTrial
             tc.ui.loadLayout(fullfile(tc.root, 'Configurations', 'ReportLayout.mat'));
             tc.choose(tc.ui.policyDropdown, 'Battery Efficient');
             pol = tc.ui.model.policyMap('Battery Efficient');
@@ -77,7 +79,6 @@ classdef guiTest < matlab.uitest.TestCase
             tc.type(tc.ui.endTimeField, T);
             tc.press(button(tc, 'Run to End'));
             Jgui = tc.ui.model.cumUncertaintyIntegral / tc.ui.clock.currentTime;
-            p = paperDefaults();
             p.EndTime = T;
             p.Policy_dwellRange = [0 0];
             p.Log = false;
@@ -104,9 +105,14 @@ classdef guiTest < matlab.uitest.TestCase
         end
 
         function savesClearsAndReloads(tc)
-            tc.choose(tc.ui.agentTypeDropdown, 'Energy Agent');
+            tc.choose(tc.ui.agentTypeDropdown, 'Physical Agent');
+            tc.choose(tc.ui.profileDropdown, 'SO (smooth)');
+            tc.type(tc.ui.accelField, 10);
             tc.ui.loadLayout(fullfile(tc.root, 'Configurations', 'ReportLayout.mat'));
-            tc.verifyClass(tc.ui.model.agents, 'EnergyAgent');   % loaded agents use the selected type
+            a = tc.ui.model.agents;
+            tc.verifyClass(a, 'PhysicalAgent');   % loaded agents use the selected settings
+            tc.verifyEqual([a.profile], repmat("SO", 1, numel(a)));
+            tc.verifyEqual(arrayfun(@(x) x.state.maxAccel, a), repmat(10, 1, numel(a)));
             saved = tc.ui.model.exportLayout();
             f = [tempname '.mat'];
             tc.addTeardown(@() delete(f));
@@ -133,10 +139,10 @@ classdef guiTest < matlab.uitest.TestCase
             tc.press(button(tc, 'Add Agent'));
             tc.press(tc.ui.ax, [20 80]);
             tc.verifyEqual(numel(tc.ui.model.agents), 1, 'agent added by clicking a target dot');
-            tc.choose(tc.ui.agentTypeDropdown, 'Energy Agent');
+            tc.choose(tc.ui.agentTypeDropdown, 'Physical Agent');
             tc.press(tc.ui.ax, [20 80]);
             tc.verifyEqual(numel(tc.ui.model.agents), 2, 'second agent added by clicking the agent on that target');
-            tc.verifyEqual(arrayfun(@(a) string(class(a)), tc.ui.model.agents), ["DefaultAgent", "EnergyAgent"], ...
+            tc.verifyEqual(arrayfun(@(a) string(class(a)), tc.ui.model.agents), ["AbstractAgent", "PhysicalAgent"], ...
                 'agent types can be mixed');
 
             tc.press(button(tc, 'Add Wall'));

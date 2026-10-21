@@ -1,35 +1,28 @@
 classdef PathFollowerController < handle
+    % Feedback law of PhysicalAgent: PD tracking of a reference point that moves along
+    % the path (position pRef, velocity vRef, acceleration aRef), with acceleration feedforward,
+    %   a = aRef + kp (pRef - p) + kd (vRef - v),   |a| <= maxAccel,
+    % so the agent keeps up with the planned speed profile instead of chasing a nearby waypoint.
+    % The defaults (kp = 16, kd = 8) give a critically damped tracking error (time constant
+    % 0.25 s). An agent counts as arrived within arrivePosTol of the end of the path once the
+    % reference has stopped and its speed is below arriveSpeedTol.
     properties
-        kp = 8.0            
-        kd = 12.0           
-        lookAheadDist = 1.0 
-        arrivePosTol = 0.5  
+        kp = 16.0
+        kd = 8.0
+        arrivePosTol = 0.5
+        arriveSpeedTol = 0.1
     end
 
     methods
-        function [arrived, aCmd, pathIndex] = computeControl(obj, state, path, pathIndex, ~)
-            arrived = false;
-            if isempty(path), aCmd = -obj.kd * state.vel; return; end
-
-            targetPos = path(pathIndex, :);
-            distToTarget = norm(targetPos - state.pos);
-
-            while distToTarget < obj.lookAheadDist && pathIndex < size(path, 1)
-                pathIndex = pathIndex + 1;
-                targetPos = path(pathIndex, :);
-                distToTarget = norm(targetPos - state.pos);
-            end
-
-            if pathIndex == size(path, 1) && distToTarget < obj.arrivePosTol
-                aCmd = -obj.kd * state.vel;
-                if norm(state.vel) < 0.1, arrived = true; aCmd = [0 0]; end
-            else
-                aCmd = obj.kp * (targetPos - state.pos) - obj.kd * state.vel;
-            end
-
+        function aCmd = track(obj, state, pRef, vRef, aRef)
+            aCmd = aRef + obj.kp * (pRef - state.pos) + obj.kd * (vRef - state.vel);
             if norm(aCmd) > state.maxAccel
-                aCmd = (aCmd / norm(aCmd)) * state.maxAccel;
+                aCmd = aCmd / norm(aCmd) * state.maxAccel;
             end
+        end
+
+        function tf = hasArrived(obj, state, pEnd)
+            tf = norm(pEnd - state.pos) < obj.arrivePosTol && norm(state.vel) < obj.arriveSpeedTol;
         end
     end
 end
