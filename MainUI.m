@@ -3,6 +3,8 @@ classdef MainUI < handle
         fig
         ax
         speedField
+        accelField          % max acceleration of agents added next
+        profileDropdown     % speed profile of agents added next
         modeLabel
         statusLabel
         timeLabel
@@ -40,6 +42,8 @@ classdef MainUI < handle
             plannerFactory = obj.registry.factoryFor('pathplanner', obj.plannerDropdown.Value);
             agentFactory   = obj.registry.factoryFor('agenttype',   obj.agentTypeDropdown.Value);
             obj.model = ScenarioModel(plannerFactory(), agentFactory);
+            obj.model.agentAccel = obj.accelField.Value;
+            obj.model.agentProfile = string(obj.profileDropdown.Value);
             obj.renderer = ScenarioRenderer(obj.ax);
             obj.controller = GraphEditController(obj.model, obj.renderer, @(m)obj.setStatus(m));
             obj.objectiveWin = ObjectivePlotWindow(objectivePos);
@@ -74,7 +78,12 @@ classdef MainUI < handle
             obj.model.importLayout(tmp.s);
             % The layout may carry its uncertainty mode and agents; show them in the controls
             obj.uncertaintyDropdown.Value = obj.model.uncertaintyMode;
-            if ~isempty(obj.model.agents), obj.speedField.Value = obj.model.agents(1).state.maxSpeed; end
+            if ~isempty(obj.model.agents)
+                a = obj.model.agents(1);
+                obj.speedField.Value = a.state.maxSpeed;
+                obj.onAgentAccelChanged(a.state.maxAccel);
+                obj.onAgentProfileChanged(a.profile);
+            end
             obj.renderer.clearAxes();
             obj.renderer.renderAll(obj.model);
             obj.onResetSimulation();
@@ -124,8 +133,8 @@ classdef MainUI < handle
             main = uigridlayout(obj.fig, [1 2], 'ColumnWidth', {280, '1x'});
             left = uigridlayout(main, [2 1], 'RowHeight', {'fit', 'fit'}, ...
                 'Padding', [0 0 0 0], 'Scrollable', 'on');
-            p  = uigridlayout(uipanel(left, 'Title','Tools'), [13 2], ...
-                'RowHeight', [repmat({'fit'}, 1, 12) {36}], 'ColumnWidth', {'1x', '1x'}, ...
+            p  = uigridlayout(uipanel(left, 'Title','Tools'), [15 2], ...
+                'RowHeight', [repmat({'fit'}, 1, 14) {36}], 'ColumnWidth', {'1x', '1x'}, ...
                 'RowSpacing', 5, 'Padding', [8 6 8 6]);
             tp = uigridlayout(uipanel(left, 'Title','Time Control & Analysis'), [7 4], ...
                 'RowHeight', repmat({'fit'}, 1, 7), 'ColumnWidth', {'fit', '1x', 'fit', '1x'}, ...
@@ -146,7 +155,7 @@ classdef MainUI < handle
             place(uibutton(p,'Text','Add Agent', ...
                 'ButtonPushedFcn', @(~,~)obj.setMode("addAgent")), 2, 1);
             obj.agentTypeDropdown = place(uidropdown(p, ...
-                'Items', obj.registry.keysFor('agenttype'), 'Value', 'Default Agent', ...
+                'Items', obj.registry.keysFor('agenttype'), 'Value', 'Abstract Agent', ...
                 'ValueChangedFcn', @(s,~)obj.onAgentTypeChanged(s.Value)), 2, 2);
             place(uibutton(p,'Text','Add Edge', ...
                 'ButtonPushedFcn', @(~,~)obj.setMode("addEdge")), 1, 2);
@@ -163,31 +172,40 @@ classdef MainUI < handle
             place(uibutton(p,'Text','Load Layout...', ...
                 'ButtonPushedFcn', @(~,~)obj.onLoadLayout()), 5, 2);
 
-            place(uilabel(p,'Text','Agent Speed:'), 6, 1);   % max speed of agents added next
+            % Settings of agents added next (agent type above, speed, acceleration, profile)
+            place(uilabel(p,'Text','Agent Speed:'), 6, 1);
             obj.speedField = place(uieditfield(p,'numeric','Value',15,'Limits',[0.01 Inf]), 6, 2);
+            place(uilabel(p,'Text','Agent Accel:'), 7, 1);
+            obj.accelField = place(uieditfield(p,'numeric','Value',15,'Limits',[0.01 Inf], ...
+                'ValueChangedFcn', @(s,~)obj.onAgentAccelChanged(s.Value)), 7, 2);
+            place(uilabel(p,'Text','Speed Profile:'), 8, 1);
+            obj.profileDropdown = place(uidropdown(p, ...
+                'Items', {'Constant', 'SO (smooth)', 'FO (trapezoid)'}, 'ItemsData', cellstr(SpeedProfile.names), ...
+                'Value', 'constant', ...
+                'ValueChangedFcn', @(s,~)obj.onAgentProfileChanged(s.Value)), 8, 2);
 
-            place(uilabel(p,'Text','Path Planner:'), 7, 1);
+            place(uilabel(p,'Text','Path Planner:'), 9, 1);
             obj.plannerDropdown = place(uidropdown(p, ...
                 'Items', obj.registry.keysFor('pathplanner'), 'Value', 'Dijkstra Corners', ...
-                'ValueChangedFcn', @(s,~)obj.onPlannerChanged(s.Value)), 7, 2);
+                'ValueChangedFcn', @(s,~)obj.onPlannerChanged(s.Value)), 9, 2);
 
             % Active Policy Selector (full width so long policy names fit)
-            place(uilabel(p,'Text','Active Policy:', 'FontWeight','bold'), 8, [1 2]);
+            place(uilabel(p,'Text','Active Policy:', 'FontWeight','bold'), 10, [1 2]);
             obj.policyDropdown = place(uidropdown(p, ...
                 'Items', obj.registry.keysFor('policy'), ...
                 'Value', 'Random Walk', ...
-                'ValueChangedFcn', @(s,~)obj.onPolicyChanged(s.Value)), 9, [1 2]);
+                'ValueChangedFcn', @(s,~)obj.onPolicyChanged(s.Value)), 11, [1 2]);
 
             % Uncertainty mode: constant A_i by default (as in the paper); spikes are opt-in
-            place(uilabel(p,'Text','Uncertainty:', 'FontWeight','bold'), 10, [1 2]);
+            place(uilabel(p,'Text','Uncertainty:', 'FontWeight','bold'), 12, [1 2]);
             obj.uncertaintyDropdown = place(uidropdown(p, ...
                 'Items', ScenarioModel.UncertaintyModes, ...
                 'Value', 'Static Uniform', ...
-                'ValueChangedFcn', @(s,~)obj.onUncertaintyModeChanged(s.Value)), 11, [1 2]);
+                'ValueChangedFcn', @(s,~)obj.onUncertaintyModeChanged(s.Value)), 13, [1 2]);
 
-            obj.modeLabel = place(uilabel(p,'Text','Mode: idle', 'FontWeight','bold'), 12, [1 2]);
+            obj.modeLabel = place(uilabel(p,'Text','Mode: idle', 'FontWeight','bold'), 14, [1 2]);
             obj.statusLabel = place(uilabel(p,'Text','', 'WordWrap','on', ...
-                'VerticalAlignment','top'), 13, [1 2]);
+                'VerticalAlignment','top'), 15, [1 2]);
 
             obj.ax.PickableParts = 'all';
             obj.ax.HitTest = 'on';
@@ -330,11 +348,22 @@ classdef MainUI < handle
             obj.setStatus(sprintf('Agent type: %s (applies to new agents)', name));
         end
 
+        function onAgentAccelChanged(obj, value)
+            obj.model.agentAccel = value;
+            obj.accelField.Value = value;
+        end
+
+        function onAgentProfileChanged(obj, name)
+            obj.model.agentProfile = string(name);
+            obj.profileDropdown.Value = char(name);
+            obj.setStatus(sprintf('Speed profile: %s (applies to new agents)', name));
+        end
+
         function onRunStateChanged(obj, running)
             % Lock component choices while a run is in progress
             state = 'on';
             if running, state = 'off'; end
-            dds = {obj.plannerDropdown, obj.policyDropdown, obj.agentTypeDropdown, obj.uncertaintyDropdown};
+            dds = {obj.plannerDropdown, obj.policyDropdown, obj.agentTypeDropdown, obj.uncertaintyDropdown, obj.profileDropdown};
             for k = 1:numel(dds)
                 if ~isempty(dds{k}) && isvalid(dds{k}), dds{k}.Enable = state; end
             end

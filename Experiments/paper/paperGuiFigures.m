@@ -55,7 +55,7 @@ end
 end
 
 function files = reel(root, outDir, opts)
-ui = openExample(root, opts, 'Energy Agent', 'Battery Efficient');
+ui = openExample(root, opts, 'Physical Agent', 'Battery Efficient');
 cleanup = onCleanup(@() closeUI(ui));
 times = round(linspace(0, opts.EndTime, 6));
 files = fullfile(outDir, compose("fig03_reel_t%03d.png", times'));
@@ -71,7 +71,7 @@ end
 
 function files = examples(root, outDir, opts)
 % agent type, policy, file tag, figure numbers (layout, objective)
-cases = {'Default Agent', 'Random Walk', 'default', [5 7]; 'Energy Agent', 'Battery Efficient', 'energy', [6 8]};
+cases = {'Physical Agent', 'Random Walk', 'default', [5 7]; 'Physical Agent', 'Battery Efficient', 'energy', [6 8]};
 files = strings(0, 1);
 for c = 1:size(cases, 1)
     ui = openExample(root, opts, cases{c, 1}, cases{c, 2});

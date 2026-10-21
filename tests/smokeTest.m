@@ -9,9 +9,13 @@ function smokeTest()
 %    scenario (Configurations/ReportLayout.mat, 5 agents) without error, with a finite J,
 %    finite agent positions, R >= 0, and at least one agent leaving its start target.
 % 4. Edge cases: a team mixing all agent types and an agent on a target with no edges, under
-%    every policy; Random Walk / Battery Efficient dwell (cmd.dwellSeconds is honoured);
+%    every policy; Random Walk (clearing dwell) and Battery Efficient (cmd.dwellSeconds) dwell;
 %    runTrial with the paper preset (Experiments/paper/paperDefaults); ED-ORHC-SO / -FO with
-%    speed and acceleration limits keep every Second-Order Agent within them.
+%    speed and acceleration limits keep every agent within them.
+% 5. Agent types: the older type names still resolve (aliases); every type x speed profile runs;
+%    only agents at rest service targets; physical agents keep pace on wall-routed edges; the
+%    heading turns smoothly on curved paths; William's Joint RHC harness (runTrial defaults with
+%    'Linear Agent') runs.
 % Prints one line per check and errors at the end (non-zero exit under -batch) if any failed.
 
 root = fileparts(fileparts(mfilename('fullpath')));
@@ -92,12 +96,12 @@ catch err
     check(false, "runTrial: paper preset  ERROR " + err.message);
 end
 for name = ["Random Walk", "Battery Efficient"]
-    [~, ~, dwelled] = runScenario(@() reportScenario('Dijkstra Corners', {'Default Agent'}), name, 20, true);
-    check(dwelled, name + " agents dwell at targets (cmd.dwellSeconds)");
+    [~, ~, dwelled] = runScenario(@() reportScenario('Dijkstra Corners', {'Physical Agent'}), name, 20, true);
+    check(dwelled, name + " agents dwell at targets");
 end
 for name = ["ED-ORHC-SO", "ED-ORHC-FO"]
     try
-        sim = reportScenario('Dijkstra Corners', {'Second-Order Agent'});
+        sim = reportScenario('Dijkstra Corners', {'Abstract Agent'});
         sim.setActivePolicy(char(name));
         pol = sim.policyMap(char(name));
         pol.speedLimit = 5; pol.accelLimit = 4;
@@ -114,6 +118,64 @@ for name = ["ED-ORHC-SO", "ED-ORHC-FO"]
     catch err
         check(false, name + " with limits  ERROR " + err.message);
     end
+end
+
+% ---- 5. Agent types ----
+aliasClass = {'Linear Agent', 'AbstractAgent', "constant"; 'Second-Order Agent', 'AbstractAgent', "SO"; ...
+    'Default Agent', 'PhysicalAgent', "constant"; 'Energy Agent', 'PhysicalAgent', "constant"};
+for k = 1:size(aliasClass, 1)
+    a = feval(reg.factoryFor('agenttype', aliasClass{k, 1}), 1, [0 0], 10);
+    check(isa(a, aliasClass{k, 2}) && a.profile == aliasClass{k, 3}, ...
+        sprintf('older agent type "%s" resolves to %s (%s)', aliasClass{k, :}));
+end
+for k = 1:numel(types)
+    for prof = SpeedProfile.names
+        [ok, detail] = runScenario(@() withProfile(reportScenario('Dijkstra Corners', types(k)), prof), ...
+            'Random Walk', 20, true);
+        check(ok, sprintf('%-23s profile %-8s  %s', types{k}, prof, detail));
+    end
+end
+try   % service only at rest
+    sim = reportScenario('Dijkstra Corners', {'Physical Agent'});
+    sim.setActivePolicy('Random Walk'); sim.resetSimulationState();
+    clock = SimulationClock(30, 0.05); bad = 0;
+    while ~clock.isFinished()
+        % residency is decided at the start of a step, from the agents' state before it
+        inTransit = arrayfun(@(a) ~isempty(a.path) && a.dwellRemaining <= 0, sim.agents);
+        dt = clock.tick(); sim.step(dt, clock.currentTime); sim.updateTargetsAndLogObjective(clock.currentTime, dt);
+        for tg = sim.targets
+            for r = tg.residingAgents(:)'
+                if iscell(r), r = r{1}; end
+                bad = bad + inTransit(r.index);
+            end
+        end
+    end
+    check(bad == 0, sprintf('only agents at rest service targets (%d violations)', bad));
+catch err
+    check(false, "service at rest  ERROR " + err.message);
+end
+try   % physical agents keep pace on a wall-routed edge (no crawling)
+    sim = reportScenario('Dijkstra Corners', {'Physical Agent'});
+    e = sim.findEdge(8, 2); P = e.curvePoints; y = sum(vecnorm(diff(P, 1, 1), 2, 2));
+    a = PhysicalAgent(1, P(1, :), 15); a.path = P; t = 0;
+    while ~isempty(a.path) && t < 60, a.update(0.05); t = t + 0.05; end
+    check(t < y / 15 + 3, sprintf('physical agent crosses edge 8-2 (%.1f m) in %.1f s (planned %.1f s)', y, t, y / 15));
+catch err
+    check(false, "physical agent pace  ERROR " + err.message);
+end
+try   % smooth heading on a curved path
+    a = AbstractAgent(1, P(1, :), 15); a.path = P; ori = []; om = [];
+    while ~isempty(a.path), a.update(0.05); ori(end+1) = a.state.ori; om(end+1) = a.state.omega; end %#ok<AGROW>
+    jump = max(abs(angle(exp(1i * diff(ori)))));
+    check(jump < 0.6 && all(isfinite(om)), sprintf('abstract agent heading on a curved edge: largest step %.2f rad, max |omega| %.1f rad/s', jump, max(abs(om))));
+catch err
+    check(false, "curved heading  ERROR " + err.message);
+end
+try   % William's harness: Joint RHC, 2 'Linear Agent's, Dynamic Uncertainty
+    out = runTrial(struct('EndTime', 20));
+    check(isfinite(out.finalJ), sprintf('runTrial defaults (Joint RHC, Linear Agent alias): J(20 s) = %.4f', out.finalJ));
+catch err
+    check(false, "runTrial defaults  ERROR " + err.message);
 end
 
 if isempty(failures)
@@ -180,4 +242,9 @@ function sim = isolatedTarget()
 % One agent on a target with no edges, plus a second, unconnected target
 sim = ScenarioModel();
 sim.importLayout(struct('targets', [10 10; 50 50], 'edges', zeros(0, 2), 'agentStarts', 1));
+end
+
+function sim = withProfile(sim, prof)
+% Every agent of sim uses the speed profile prof
+for a = sim.agents, a.profile = prof; end
 end

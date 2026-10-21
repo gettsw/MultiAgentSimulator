@@ -4,6 +4,7 @@ classdef KinematicState < handle
         vel double = [0 0]
         acc double = [0 0]
         ori double = 0
+        omega double = 0        % angular velocity (heading rate) [rad/s]
         maxSpeed = 5
         maxAccel = 15
         wallDetected logical = false

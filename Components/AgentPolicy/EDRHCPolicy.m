@@ -26,7 +26,7 @@ classdef EDRHCPolicy < handle
     % simulator; alpha = 0.5 gives the unweighted RHC method of Sec. III.
     %
     % Transit models (property transit):
-    %   "constant speed"  rho_ij = y_ij / maxSpeed, fixed (first-order agents, FO-0; LinearAgent)
+    %   "constant speed"  rho_ij = y_ij / maxSpeed, fixed (first-order agents, FO-0)
     %   "SO"              rho_ij is a decision: the RHCP minimizes energyWeight * E(rho) + J_sH
     %                     with the energy E(rho) of the minimum-energy speed profile, 12 y^2/rho^3
     %                     without limits (Theorem 3)
@@ -34,10 +34,12 @@ classdef EDRHCPolicy < handle
     %                     paper's FO-3, Theorem 5)
     % speedLimit and accelLimit (Inf by default) bound the energy-aware profiles. E(rho) is then
     % that of the bounded minimum-energy profile (Apps. D-E, generalized to both limits; see
-    % SecondOrderAgent), and rho is no shorter than the limits allow.
-    % The energy-aware models are meant for SecondOrderAgent: when the agent leaves, the policy
-    % hands it rho_ij and the profile. With a SecondOrderAgent, "constant speed" executes the
-    % FO-0 plans with the SO profile over rho = y/maxSpeed (the JS simulator's SO#).
+    % SpeedProfile), and rho is no shorter than the limits allow.
+    % When an agent leaves, the policy hands it the planned transit time rho_ij; the energy-
+    % aware models also hand it their profile and limits. A AbstractAgent then follows the
+    % plan exactly (with profile "constant" it is the first-order agent of the Automatica paper;
+    % with profile "SO" under "constant speed" it is the JS simulator's SO#); a
+    % PhysicalAgent tracks it with feedback.
     % All parameters (alpha, transit, limits, energyWeight, H, ...) are properties, set in
     % runTrial with 'Policy_<name>'.
     %
@@ -127,8 +129,8 @@ classdef EDRHCPolicy < handle
             obj.states(agent.index) = struct('stage', "travel", 'target', j, 'covered', [], 'hold', false);
             if isprop(agent, 'transitTime')   % hand the planned transit over to the agent
                 agent.transitTime = rho;
-                if obj.transit == "constant speed"
-                    agent.transitProfile = "SO"; agent.transitLimits = [Inf Inf];
+                if obj.transit == "constant speed"   % the agent's own profile over rho
+                    agent.transitProfile = ""; agent.transitLimits = [Inf Inf];
                 else
                     agent.transitProfile = obj.transit; agent.transitLimits = [obj.speedLimit, obj.accelLimit];
                 end
@@ -184,7 +186,7 @@ classdef EDRHCPolicy < handle
                     rhoRange = [rho0 rho0];
                 else
                     rhoRange = [max(obj.minTransit * rho0, ...
-                        SecondOrderAgent.minTransit(y, obj.speedLimit, obj.accelLimit)), obj.H];
+                        SpeedProfile.minTransit(y, obj.speedLimit, obj.accelLimit)), obj.H];
                 end
                 d = struct('R', R, 'A', A, 'B', B, 'j', k, 'rho', rho0, 'w', weights, ...
                     'y', y, 'vb', obj.speedLimit, 'ub', obj.accelLimit);
@@ -427,7 +429,7 @@ classdef EDRHCPolicy < handle
                 else
                     r = Z(:, 3);
                     J = obj.planCost(d, [Z * M' + c0, r]) + sum(d.w) / 2 * obj.energyWeight ...
-                        * SecondOrderAgent.transitEnergy(obj.transit, d.y, r, d.vb, d.ub);
+                        * SpeedProfile.energy(obj.transit, d.y, r, d.vb, d.ub);
                 end
             end
         end

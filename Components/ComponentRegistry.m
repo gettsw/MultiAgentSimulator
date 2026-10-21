@@ -5,6 +5,8 @@ classdef ComponentRegistry < handle
         pathPlanners   % name -> @() planner
         policies       % name -> @() policy
         agentTypes     % name -> @(idx, pos, speed) agent
+        aliases        % older agent type names -> @(idx, pos, speed) agent; resolved by factoryFor
+                       % but not listed by keysFor (so not offered in the GUI)
     end
 
     methods
@@ -25,10 +27,16 @@ classdef ComponentRegistry < handle
             obj.policies('ED-ORHC-FO')        = @() EDRHCPolicy(Transit="FO");
 
             obj.agentTypes = containers.Map('KeyType','char','ValueType','any');
-            obj.agentTypes('Default Agent') = @(idx, pos, sp) DefaultAgent(idx, pos, sp);
-            obj.agentTypes('Energy Agent')  = @(idx, pos, sp) EnergyAgent(idx, pos, sp);
-            obj.agentTypes('Linear Agent')  = @(idx, pos, sp) LinearAgent(idx, pos, sp);
-            obj.agentTypes('Second-Order Agent') = @(idx, pos, sp) SecondOrderAgent(idx, pos, sp);
+            obj.agentTypes('Abstract Agent')   = @(idx, pos, sp) AbstractAgent(idx, pos, sp);
+            obj.agentTypes('Physical Agent') = @(idx, pos, sp) PhysicalAgent(idx, pos, sp);
+
+            % Agent types before the consolidation of 2026-10-20, kept so older scripts and
+            % layouts run unchanged (e.g. William's Joint RHC studies use 'Linear Agent')
+            obj.aliases = containers.Map('KeyType','char','ValueType','any');
+            obj.aliases('Linear Agent')       = @(idx, pos, sp) AbstractAgent(idx, pos, sp);
+            obj.aliases('Second-Order Agent') = @(idx, pos, sp) AbstractAgent(idx, pos, sp, Profile="SO");
+            obj.aliases('Default Agent')      = @(idx, pos, sp) PhysicalAgent(idx, pos, sp);
+            obj.aliases('Energy Agent')       = @(idx, pos, sp) PhysicalAgent(idx, pos, sp);
         end
 
         function names = keysFor(obj, kind)
@@ -37,7 +45,11 @@ classdef ComponentRegistry < handle
 
         function h = factoryFor(obj, kind, name)
             m = obj.mapFor(kind);
-            h = m(name);
+            if ~isKey(m, name) && strcmpi(kind, 'agenttype') && isKey(obj.aliases, name)
+                h = obj.aliases(name);
+            else
+                h = m(name);
+            end
         end
     end
 
