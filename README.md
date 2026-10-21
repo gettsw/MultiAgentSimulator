@@ -91,6 +91,19 @@ matlab -batch "addpath(genpath(pwd)); assertSuccess(runtests('guiTest'))"
 ```
 Screenshots of each stage are written to `results/gui/` (git-ignored).
 
+## Event-driven receding horizon control (ED-RHC)
+
+`ED-RHC` and `ED-RHC-alpha` (`Components/AgentPolicy/EDRHCPolicy.m`) implement the distributed event-driven receding horizon controller of S. Welikala and C. G. Cassandras, "Event-driven receding horizon control for distributed persistent monitoring in network systems", *Automatica* 127 (2021) 109519.
+
+- **Local and event-driven.** Each agent decides on its own, using only its target `i` and the 1-hop neighbors of `i` (their `R`, `A`, `B`, the transit times of the edges `(i, j)`, and whether each neighbor is covered). It solves RHCP1 on arrival (active time `u_i`), RHCP2 when `R_i` reaches 0 (inactive time `v_i`), and RHCP3 when it leaves (next target `j`), and it re-solves RHCP1/RHCP2 when a neighbor becomes covered or uncovered.
+- **Agents avoid each other.** A target is covered while another agent is at it or on its way to it; covered neighbors are left out, so two agents never share a target.
+- **Variable horizon.** Each RHCP plans `[u_i, v_i]` at `i`, the transit to `j`, and `[u_j, v_j]` at `j` over a horizon `w <= H` (`H = 250` by default) and minimizes the neighborhood cost `(1/w) * sum of the integrals of R`.
+- **RHC-alpha.** `ED-RHC-alpha` weights the next target's cost in RHCP3 by `alpha = 1/|N_i|^2` (`N_i` includes `i`) and the others by `1 - alpha` (Sec. IV-A); `ED-RHC` uses the unweighted cost. Set `alpha` to any value in `[0, 1]` with `'Policy_alpha'` in `runTrial`.
+- **Solver.** The RHCPs are solved numerically (grid search plus `fmincon` on each smooth case) instead of with the paper's closed forms.
+- **Agents.** The method assumes first-order agents moving at constant speed, so use the **Linear Agent**: its transit times equal path length / speed. Other agent types run, but the planned transit times do not match their motion.
+
+`Experiments/validation/validateEDRHC` compares both policies with the legacy JavaScript simulator on its presets (`Configurations/Legacy/`).
+
 ## Headless experiments
 
 `Experiments/runTrial(params)` runs one simulation without the GUI. Unset parameters take the values in `Experiments/trialDefaults.m`; component parameters take any `ComponentRegistry` name:

@@ -116,8 +116,12 @@ classdef ScenarioModel < handle
             end
 
             % 3. UPDATE AGENT STATES AND EXECUTE POLICIES
+            % Event-driven policies may define onStep(agent, model, simTime) to watch for
+            % events (e.g. a neighbor becoming covered) and revise a dwell in progress
+            watch = ismethod(obj.policy, 'onStep');
             for k = 1:numel(obj.agents)
                 a = obj.agents(k);
+                if watch, obj.policy.onStep(a, obj, simTime); end
                 if a.dwellRemaining <= 0 && isempty(a.path)
                     adj = obj.buildAdjacency();
                     cmd = obj.policy.plan(a, obj, adj, a.current_target_idx, simTime);

@@ -19,6 +19,7 @@ reg = ComponentRegistry();
 plannerFactory = reg.factoryFor('pathplanner', char(p.Planner));
 model = ScenarioModel(plannerFactory(), reg.factoryFor('agenttype', char(p.AgentType)));
 model.importLayout(tmp.s);
+model.detectionRadius = p.DetectionRadius;
 stored = arrayfun(@(a) a.initialTargetIdx, model.agents);   % start targets saved in the layout
 model.agents = [];   % trial parameters place the agents ("layout" reuses the stored starts)
 for t = model.targets
