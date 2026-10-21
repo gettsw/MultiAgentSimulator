@@ -27,16 +27,22 @@ classdef MainUI < handle
     end
     
     methods
-        function obj = MainUI()
+        function obj = MainUI(opts)
+            % MainUI('Monitor', k) opens the windows on monitor k (a row of
+            % get(groot, 'MonitorPositions')); by default they open on the primary monitor
+            arguments
+                opts.Monitor double = []
+            end
             obj.registry = ComponentRegistry();
-            obj.buildUI();
+            [mainPos, objectivePos] = MainUI.windowPositions(opts.Monitor);
+            obj.buildUI(mainPos);
 
             plannerFactory = obj.registry.factoryFor('pathplanner', obj.plannerDropdown.Value);
             agentFactory   = obj.registry.factoryFor('agenttype',   obj.agentTypeDropdown.Value);
             obj.model = ScenarioModel(plannerFactory(), agentFactory);
             obj.renderer = ScenarioRenderer(obj.ax);
             obj.controller = GraphEditController(obj.model, obj.renderer, @(m)obj.setStatus(m));
-            obj.objectiveWin = ObjectivePlotWindow();
+            obj.objectiveWin = ObjectivePlotWindow(objectivePos);
             obj.clock = SimulationClock(obj.endTimeField.Value, obj.dtField.Value);
             
             obj.sim = SimulationController(obj.model, obj.renderer, obj.clock, ...
@@ -56,12 +62,62 @@ classdef MainUI < handle
             obj.renderer.renderAll(obj.model);
             obj.setTime(0, obj.clock.endTime);
         end
+
+        % File I/O behind the Save/Load Layout buttons, callable without the file dialogs
+        function saveLayout(obj, file)
+            s = obj.model.exportLayout();
+            save(file, 's');
+        end
+
+        function loadLayout(obj, file)
+            tmp = load(file, 's');
+            obj.model.importLayout(tmp.s);
+            % The layout may carry its uncertainty mode and agents; show them in the controls
+            obj.uncertaintyDropdown.Value = obj.model.uncertaintyMode;
+            if ~isempty(obj.model.agents), obj.speedField.Value = obj.model.agents(1).state.maxSpeed; end
+            obj.renderer.clearAxes();
+            obj.renderer.renderAll(obj.model);
+            obj.onResetSimulation();
+        end
     end
-    
+
+    methods (Static)
+        function k = secondaryMonitor()
+            % A monitor other than the primary one (whose origin is [1 1]), for windows opened by
+            % scripts and tests; 1 when there is only one monitor
+            mons = get(groot, 'MonitorPositions');
+            k = find(mons(:, 1) ~= 1 | mons(:, 2) ~= 1, 1);
+            if isempty(k), k = 1; end
+        end
+    end
+
+    methods (Static, Access = private)
+        function [mainPos, objPos] = windowPositions(monitor)
+            % Default spots on the primary monitor, or fitted onto the given monitor: main window
+            % at its top left, objective window to the right or, if there is no room, below
+            mainPos = [100 100 1200 780];
+            objPos = [1350 200 700 450];
+            if isempty(monitor), return; end
+            mons = get(groot, 'MonitorPositions');
+            m = mons(min(monitor, size(mons, 1)), :);   % [left bottom width height]
+            gap = 20;
+            top = m(2) + m(4) - 1 - 60;                 % clear of the menu bar and title bar
+            w = min(1200, m(3) - 2*gap);
+            h = min(780, m(4) - 120);
+            mainPos = [m(1) + gap, top - h, w, h];
+            ow = min(700, m(3) - 2*gap);
+            if mainPos(1) + w + gap + ow <= m(1) + m(3) - gap
+                objPos = [mainPos(1) + w + gap, top - 450, ow, 450];
+            else
+                objPos = [m(1) + gap, mainPos(2) - gap - 30 - 450, ow, 450];   % 30: title bar
+            end
+        end
+    end
+
     methods (Access = private)
-        function buildUI(obj)
+        function buildUI(obj, position)
             obj.fig = uifigure('Name','Multi-Agent Persistent Monitoring Simulator', ...
-                'Position', [100 100 1200 780]);
+                'Position', position);
             obj.fig.CloseRequestFcn = @(~,~) obj.forceCloseAll();
 
             % Grid layouts size everything automatically; the left column scrolls if the window is short
@@ -107,7 +163,7 @@ classdef MainUI < handle
             place(uibutton(p,'Text','Load Layout...', ...
                 'ButtonPushedFcn', @(~,~)obj.onLoadLayout()), 5, 2);
 
-            place(uilabel(p,'Text','Agent Accel:'), 6, 1);
+            place(uilabel(p,'Text','Agent Speed:'), 6, 1);   % max speed of agents added next
             obj.speedField = place(uieditfield(p,'numeric','Value',15,'Limits',[0.01 Inf]), 6, 2);
 
             place(uilabel(p,'Text','Path Planner:'), 7, 1);
@@ -122,11 +178,11 @@ classdef MainUI < handle
                 'Value', 'Random Walk', ...
                 'ValueChangedFcn', @(s,~)obj.onPolicyChanged(s.Value)), 9, [1 2]);
 
-            % Dynamic vs. Static Uncertainty Selector
+            % Uncertainty mode: constant A_i by default (as in the paper); spikes are opt-in
             place(uilabel(p,'Text','Uncertainty:', 'FontWeight','bold'), 10, [1 2]);
             obj.uncertaintyDropdown = place(uidropdown(p, ...
-                'Items', {'Dynamic Uncertainty', 'Static Priority Target', 'Static Uniform'}, ...
-                'Value', 'Dynamic Uncertainty', ...
+                'Items', ScenarioModel.UncertaintyModes, ...
+                'Value', 'Static Uniform', ...
                 'ValueChangedFcn', @(s,~)obj.onUncertaintyModeChanged(s.Value)), 11, [1 2]);
 
             obj.modeLabel = place(uilabel(p,'Text','Mode: idle', 'FontWeight','bold'), 12, [1 2]);
@@ -294,22 +350,17 @@ classdef MainUI < handle
         end
         
         function onSaveLayout(obj)
-            s = obj.model.exportLayout();
             [f,d] = uiputfile('*.mat','Save layout');
             if isequal(f,0), return; end
-            save(fullfile(d,f), 's');
+            obj.saveLayout(fullfile(d,f));
         end
-        
+
         function onLoadLayout(obj)
             [f,d] = uigetfile('*.mat','Load layout');
             if isequal(f,0), return; end
-            tmp = load(fullfile(d,f), 's');
-            obj.model.importLayout(tmp.s);
-            obj.renderer.clearAxes();
-            obj.renderer.renderAll(obj.model);
-            obj.onResetSimulation();
+            obj.loadLayout(fullfile(d,f));
         end
-        
+
         function onClearAll(obj)
             if ~isempty(obj.sim), obj.sim.pause(); end
             obj.controller.clearAll();

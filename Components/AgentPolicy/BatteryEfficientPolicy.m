@@ -1,6 +1,8 @@
 classdef BatteryEfficientPolicy < handle
     properties
         criticalBatteryThreshold = 20.0 % Percentage
+        dwellRange = [0.5 1.5]          % dwell at each target ~ U(dwellRange) seconds; [0 0] = no dwell
+        lowBatteryDwellRange = [5 10]   % dwell when the battery is below the threshold
     end
 
     methods
@@ -31,11 +33,11 @@ classdef BatteryEfficientPolicy < handle
             cmd.kind = "move";
             cmd.targetIdx = bestIdx;
 
+            range = obj.dwellRange;
             if isprop(agent, 'battery_percentage') && agent.battery_percentage < obj.criticalBatteryThreshold
-                cmd.dwellSeconds = 5.0 + 5.0*rand(); 
-            else
-                cmd.dwellSeconds = 0.5 + 1.0*rand(); 
+                range = obj.lowBatteryDwellRange;
             end
+            cmd.dwellSeconds = range(1) + diff(range)*rand();
         end
     end
 end

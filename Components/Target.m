@@ -16,13 +16,13 @@ classdef Target < handle
         % Uncertainty state
         R                    % Uncertainty state
         A                    % Dynamic growth rate A(t)
-        B = 20.0             % Base decay rate per agent
+        B = 10.0             % Decay rate per agent (paper default)
         lastVisitedTime = 0  % Timestamp when an agent last visited/cleared uncertainty
         % Dynamic Spike Parameters (Scenario C)
         A_base = 1.0          % Baseline growth rate for the active mode (set each step)
         A_priorityBase = 1.0  % Baseline when target 1 is the high-priority target
         A_uniformBase = 1.0   % Baseline for every target in 'Static Uniform'
-        A_spike = 28.0        % Emergency spike growth rate (1 agent: +8 net, 2 agents: -12 net)
+        A_spike = 14.0        % Spike growth rate; net with n agents is A_spike - n*B (B = 10: 1 agent +4, 2 agents -6)
         spikeInterval = 250.0 % Total cycle repeat time (5 targets * 50s step = 250s)
         spikeDuration = 10.0  % Active window duration of spike (seconds)
         spikePhaseOffset = 0  % Stagger offset (seconds)
@@ -42,10 +42,13 @@ classdef Target < handle
         B_val
     end
 
+    properties (SetAccess = private)
+        initialR = 0         % R(0), restored on reset (set from layouts by setRates)
+    end
+
     properties (Access = private)
         prevAgentIDs
         % Store initial state for reset
-        initialR
         initialA
         initialB
         initialColor
@@ -53,7 +56,7 @@ classdef Target < handle
         initialLastVisitedTime
         % Bar scaling settings
         barMaxDisplayHeight = 15   % height in axis units
-        barMaxR = 25              % R value that maps to full height (expanded for spikes)
+        barMaxR = 25              % R at full height (set by updateBar, shared by all targets)
         barWidth = 2              % width of the bar
         barYOffset = 3            % offset above the target marker
     end
@@ -74,11 +77,11 @@ classdef Target < handle
             obj.barFrameHandle = [];
 
             obj.R = 0;
-            obj.B = 20.0;
+            obj.B = 10.0;
 
             % --- Scenario C Configuration (40s Delay Between Spikes) ---
             obj.A_base = 1.0;
-            obj.A_spike = 28.0;
+            obj.A_spike = 14.0;
             obj.spikeDuration = 10.0;  % 10 seconds of active spike
 
             % Priority modes: Target 1 grows faster; 'Static Uniform' uses A_base = 1 for all
@@ -109,7 +112,7 @@ classdef Target < handle
 
         function updateGrowthRate(obj, globalTime, uncertaintyMode)
             % Evaluates dynamic growth rate A(t) based on periodic spike windows
-            if nargin < 3, uncertaintyMode = 'Dynamic Uncertainty'; end
+            if nargin < 3, uncertaintyMode = 'Static Uniform'; end
             [obj.A, obj.A_base] = obj.growthRateAt(globalTime, uncertaintyMode);
         end
 
@@ -139,7 +142,7 @@ classdef Target < handle
 
         function updateUncertainty(obj, dt, globalTime, uncertaintyMode)
             if nargin < 4
-                uncertaintyMode = 'Dynamic Uncertainty';
+                uncertaintyMode = 'Static Uniform';
             end
 
             % Update growth rate (constant A_base for Static, spiking for Dynamic)
@@ -179,8 +182,24 @@ classdef Target < handle
             obj.A = obj.A_base;
         end
 
-        function updateBar(obj)
-            % Called once per rendered frame, not every physics step
+        function setRates(obj, A, B, R0)
+            % Per-target parameters stored in layout files (ScenarioModel.importLayout); [] keeps
+            % the current value. A is the base growth rate A_i: the 'Static Uniform' rate, and the
+            % baseline of the other modes for every target except the priority target 1.
+            if ~isempty(A)
+                obj.A_uniformBase = A;
+                if obj.index ~= 1, obj.A_priorityBase = A; end
+                obj.A_base = obj.A_priorityBase;
+                obj.A = obj.A_base;
+            end
+            if ~isempty(B), obj.B = B; obj.initialB = B; end
+            if ~isempty(R0), obj.R = R0; obj.initialR = R0; end
+        end
+
+        function updateBar(obj, maxR)
+            % Called once per rendered frame, not every physics step. maxR (optional) is the R
+            % drawn at full height; ScenarioRenderer passes the largest R seen in the run
+            if nargin > 1, obj.barMaxR = maxR; end
             if ~isempty(obj.barHandle) && isvalid(obj.barHandle)
                 set(obj.barHandle, 'Position', obj.computeBarPosition(), ...
                     'FaceColor', obj.computeBarColor());
@@ -227,6 +246,8 @@ classdef Target < handle
         end
 
         function draw(obj, ax)
+            % Nothing here takes mouse clicks: they reach the canvas, so clicking a target dot
+            % picks the target in Add Agent / Add Edge mode
             % --- Bar frame (container) ---
             obj.barFrameHandle = rectangle(ax, ...
                 'Position', obj.computeBarFramePosition(), ...
@@ -234,7 +255,8 @@ classdef Target < handle
                 'LineStyle', '--', ...
                 'LineWidth', 1.0, ...
                 'FaceColor', 'none', ...
-                'HandleVisibility', 'off');
+                'HandleVisibility', 'off', ...
+                'PickableParts', 'none');
 
             % --- Filled bar ---
             obj.barHandle = rectangle(ax, ...
@@ -243,20 +265,23 @@ classdef Target < handle
                 'EdgeColor', 'k', ...
                 'LineWidth', 1.2, ...
                 'Curvature', 0.1, ...
-                'HandleVisibility', 'off');
+                'HandleVisibility', 'off', ...
+                'PickableParts', 'none');
 
             % --- Target marker ---
             obj.graphicHandle = plot(ax, obj.position(1), obj.position(2), 'o', ...
                 'MarkerSize', obj.markerSize, ...
                 'MarkerFaceColor', obj.color, ...
-                'MarkerEdgeColor', 'k');
+                'MarkerEdgeColor', 'k', ...
+                'PickableParts', 'none');
 
             % --- Label (index) ---
             obj.labelHandle = text(ax, obj.position(1), obj.position(2) - 0.04, ...
                 num2str(obj.index), ...
                 'Color', obj.color, ...
                 'FontSize', 10, ...
-                'HorizontalAlignment', 'center');
+                'HorizontalAlignment', 'center', ...
+                'PickableParts', 'none');
         end
 
         function updateResidingAgents(obj, agentList, globalTime)
@@ -378,7 +403,12 @@ classdef Target < handle
         function pos = computeBarFramePosition(obj)
             x = obj.position(1) - obj.barWidth/2;
             y = obj.position(2) + obj.barYOffset;
-            pos = [x, y, obj.barWidth, obj.barMaxDisplayHeight];
+            pos = [x, y, obj.barWidth, obj.barDisplayHeight()];
+        end
+
+        function h = barDisplayHeight(obj)
+            % Full bar height, shortened for targets near the top of the canvas (fixed at y = 100)
+            h = max(2, min(obj.barMaxDisplayHeight, 100 - obj.position(2) - obj.barYOffset));
         end
 
         function h = computeBarHeight(obj)
@@ -387,7 +417,7 @@ classdef Target < handle
                 return;
             end
             frac = min(max(obj.R / obj.barMaxR, 0), 1);
-            h = frac * obj.barMaxDisplayHeight;
+            h = frac * obj.barDisplayHeight();
         end
 
         function c = computeBarColor(obj)

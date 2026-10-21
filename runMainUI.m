@@ -1,6 +1,7 @@
 % Run this file
-function runMainUI()
+function runMainUI(varargin)
+% runMainUI or runMainUI('Monitor', k) to open the windows on monitor k
 root = fileparts(mfilename('fullpath'));
 addpath(genpath(root));
-ui = MainUI(); %#ok<NASGU>
+ui = MainUI(varargin{:}); %#ok<NASGU>
 end

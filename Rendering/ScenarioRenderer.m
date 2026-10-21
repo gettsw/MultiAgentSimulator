@@ -3,6 +3,7 @@ classdef ScenarioRenderer < handle
         ax
         edgePreviewLine
         bgImageHandle
+        barScale = 25   % R at full bar height: the largest R seen since the last full redraw
     end
 
     methods
@@ -14,10 +15,14 @@ classdef ScenarioRenderer < handle
             hold(obj.ax, 'off');
         end
 
-        function loadBackgroundImage(obj)
-            [file, path] = uigetfile({'*.jpg;*.png;*.bmp;*.tif', 'Image Files (*.jpg, *.png, *.bmp, *.tif)'});
-            if isequal(file, 0), return; end
-            img = imread(fullfile(path, file));
+        function loadBackgroundImage(obj, file)
+            % Asks for the image file unless one is given
+            if nargin < 2
+                [f, d] = uigetfile({'*.jpg;*.png;*.bmp;*.tif', 'Image Files (*.jpg, *.png, *.bmp, *.tif)'});
+                if isequal(f, 0), return; end
+                file = fullfile(d, f);
+            end
+            img = imread(file);
             img = flipud(img);
             if ~isempty(obj.bgImageHandle) && isgraphics(obj.bgImageHandle)
                 delete(obj.bgImageHandle);
@@ -67,6 +72,7 @@ classdef ScenarioRenderer < handle
         end
 
         function renderAll(obj, model)
+            obj.barScale = 25;   % full redraws come with resets, loads and edits
             obj.renderWalls(model);
             obj.renderEdges(model);
             obj.renderTargets(model);
@@ -79,7 +85,7 @@ classdef ScenarioRenderer < handle
             for i = 1:size(model.walls, 1)
                 w = model.walls(i, :);
                 line(obj.ax, [w(1) w(3)], [w(2) w(4)], ...
-                    'Color', [0.2 0.2 0.2], 'LineWidth', 4, 'Tag', 'Wall');
+                    'Color', [0.2 0.2 0.2], 'LineWidth', 4, 'Tag', 'Wall', 'PickableParts', 'none');
             end
             hold(obj.ax, 'off');
         end
@@ -96,7 +102,9 @@ classdef ScenarioRenderer < handle
         end
 
         function renderAgents(obj, model)
-            for t = 1:numel(model.targets), model.targets(t).updateBar(); end
+            % One scale for all bars, growing with the largest R so bars never saturate
+            if ~isempty(model.targets), obj.barScale = max(obj.barScale, max([model.targets.R])); end
+            for t = 1:numel(model.targets), model.targets(t).updateBar(obj.barScale); end
             for k = 1:numel(model.agents)
                 a = model.agents(k);
                 if isempty(a.graphicHandle) || ~isgraphics(a.graphicHandle)
