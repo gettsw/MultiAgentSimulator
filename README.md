@@ -93,16 +93,46 @@ Screenshots of each stage are written to `results/gui/` (git-ignored).
 
 ## Event-driven receding horizon control (ED-RHC)
 
-`ED-RHC` and `ED-RHC-alpha` (`Components/AgentPolicy/EDRHCPolicy.m`) implement the distributed event-driven receding horizon controller of S. Welikala and C. G. Cassandras, "Event-driven receding horizon control for distributed persistent monitoring in network systems", *Automatica* 127 (2021) 109519.
+`ED-RHC` (`Components/AgentPolicy/EDRHCPolicy.m`) implements the distributed event-driven receding horizon controller of S. Welikala and C. G. Cassandras, "Event-driven receding horizon control for distributed persistent monitoring in network systems", *Automatica* 127 (2021) 109519.
 
-- **Local and event-driven.** Each agent decides on its own, using only its target `i` and the 1-hop neighbors of `i` (their `R`, `A`, `B`, the transit times of the edges `(i, j)`, and whether each neighbor is covered). It solves RHCP1 on arrival (active time `u_i`), RHCP2 when `R_i` reaches 0 (inactive time `v_i`), and RHCP3 when it leaves (next target `j`), and it re-solves RHCP1/RHCP2 when a neighbor becomes covered or uncovered.
-- **Agents avoid each other.** A target is covered while another agent is at it or on its way to it; covered neighbors are left out, so two agents never share a target.
-- **Variable horizon.** Each RHCP plans `[u_i, v_i]` at `i`, the transit to `j`, and `[u_j, v_j]` at `j` over a horizon `w <= H` (`H = 250` by default) and minimizes the neighborhood cost `(1/w) * sum of the integrals of R`.
-- **RHC-alpha.** `ED-RHC-alpha` weights the next target's cost in RHCP3 by `alpha = 1/|N_i|^2` (`N_i` includes `i`) and the others by `1 - alpha` (Sec. IV-A); `ED-RHC` uses the unweighted cost. Set `alpha` to any value in `[0, 1]` with `'Policy_alpha'` in `runTrial`.
+- **Local and event-driven.** Each agent decides on its own, using only its target `i` and the 1-hop neighbors of `i`: their `R`, `A`, `B`, the edges `(i, j)`, and whether each neighbor is covered.
+  - It solves RHCP1 on arrival (active time `u_i`), RHCP2 when `R_i` reaches 0 (inactive time `v_i`), and RHCP3 when it leaves (next target `j`).
+  - It re-solves RHCP1/RHCP2 when a neighbor becomes covered or uncovered.
+- **Agents avoid each other.** A target is covered while another agent is at it or on its way to it. Covered neighbors are left out, so two agents never share a target.
+- **Variable horizon.** Each RHCP plans `[u_i, v_i]` at `i`, the transit to `j`, and `[u_j, v_j]` at `j` over a horizon `w <= H` (`H = 250` by default). It minimizes the neighborhood cost `(1/w) * sum of the integrals of R`.
+- **alpha** (a parameter). RHCP3 weights the next target's cost by `alpha` and the others' by `1 - alpha`.
+  - The default `"nominal"` is the paper's `alpha = 1/|N_i|^2` (Sec. IV-A, the RHC-alpha method; `N_i` includes `i`), as in the JS simulator.
+  - `alpha = 0.5` gives the paper's unweighted RHC method (Sec. III).
+  - Set it with `'Policy_alpha'` in `runTrial`.
 - **Solver.** The RHCPs are solved numerically (grid search plus `fmincon` on each smooth case) instead of with the paper's closed forms.
 - **Agents.** The method assumes first-order agents moving at constant speed, so use the **Linear Agent**: its transit times equal path length / speed. Other agent types run, but the planned transit times do not match their motion.
 
-`Experiments/validation/validateEDRHC` compares both policies with the legacy JavaScript simulator on its presets (`Configurations/Legacy/`).
+`Experiments/validation/validateEDRHC` compares `alpha = 0.5` and the nominal alpha with the legacy JavaScript simulator on its presets (`Configurations/Legacy/`).
+
+### Energy-aware ED-RHC (ED-ORHC-SO, ED-ORHC-FO)
+
+`ED-ORHC-SO` and `ED-ORHC-FO` (`EDRHCPolicy` with `transit = "SO"` or `"FO"`) implement the energy-aware variant of S. Welikala and C. G. Cassandras, "Event-driven receding horizon control of energy-aware dynamic agents for distributed persistent monitoring", arXiv 2102.12963 (IEEE CDC 2021). Use them with the **Second-Order Agent**.
+
+- **Objective.** `J_T = energyWeight * J_e + J_s`. Here `J_e` is the integral of the squared tangential acceleration `u(t)^2` over all agents, and `J_s` is the usual sensing objective.
+  - The default `energyWeight = 7.68e-3` is the paper's `213.3e-6` (for a 600 x 600 space) rescaled to the 100 x 100 canvas. Energy grows with length squared, so the factor is 36.
+  - `EDRHCPolicy.weightFromBeta(beta, model)` gives the paper's App. A rule, eq. (77): `beta/(1 - beta) * ybar^2 / vmax^4`, where `ybar` is the mean edge length and `vmax` the agents' `maxSpeed`. With `"accel"` as a third argument it gives `beta/(1 - beta) / umax^2`.
+  - In `runTrial`, `'EnergyBeta', beta` (optionally with `'EnergyBound', "accel"`) applies this rule.
+- **Transit time as a decision.** Events, locality, covering and alpha are as in ED-RHC. In addition, each RHCP chooses the transit time `rho_ij` and adds the energy `E(rho)` of the speed profile on that edge. In RHCP3 the alpha-weighted sensing cost is doubled, so that `alpha = 0.5` gives the paper's objective.
+- **Speed and acceleration limits** (parameters `speedLimit` and `accelLimit`, `Inf` by default; `'Policy_speedLimit'` and `'Policy_accelLimit'` in `runTrial`). The agent uses the minimum-energy profile of the method's family for the planned `y` and `rho`, rest to rest:
+  - **SO** (any profile). Without limits, `v(t) = 6 y t (rho - t)/rho^3` with `E = 12 y^2/rho^3` (Theorem 3).
+    - Under a speed limit, `u` falls linearly to 0 as the speed reaches the limit, then the agent cruises.
+    - Under an acceleration limit, `u` is held at the limit, then falls linearly (the paper's SO-A).
+    - Under both, it accelerates at the limit, ramps `u` down to 0 as it reaches the speed limit, cruises, and mirrors this at the end.
+  - **FO** (trapezoids, the paper's FO-3). Without limits, the trapezoid accelerates for `rho/3`, cruises at `3y/(2 rho)`, brakes for `rho/3`, and has `E = 27 y^2/(2 rho^3)` (Theorem 5). With limits, the cruise speed is clamped to what they allow (the paper's FO-V and FO-A).
+  - The RHCP never plans a transit shorter than the limits allow: `y/v + v/u`, or `2 sqrt(y/u)` on short edges.
+  - These profiles generalize the paper's Apps. D-E to both limits at once. The speed-limited SO keeps `u` continuous, which uses 2-6% less energy than the paper's SO-V profile.
+- **Second-Order Agent** (`Components/AgentTypes/SecondOrderAgent.m`). It follows its path by arc length over the transit time, profile and limits the policy hands it. It starts and stops at rest and stays still while dwelling. It accumulates `J_e` exactly and keeps the Energy Agent battery model as a reported SOC.
+  - Without a planned transit time, the agent uses the SO profile with peak speed `maxSpeed`.
+  - Under `ED-RHC` it runs each fixed transit `y/maxSpeed` with the SO profile, which is the JS simulator's SO#.
+- **Metrics.** With Second-Order Agents, `runTrial` also returns `out.Je`, `out.JT`, `out.vmax` and `out.umax` (paper eqs. 3 and 73), and `out.log.Je` holds the per-step energy.
+- **`clearFirst`** (default `false`, which follows the paper). Set it to `true` for the JS simulator's energy-aware convention: every visit clears the target, there is no RHCP1 on arrival, and plans only include visits that clear `j`.
+
+`Experiments/validation/validateEDORHC` compares both methods (without limits) with the JS simulator (methods 9 and 11) under the JS conventions.
 
 ## Headless experiments
 
@@ -117,7 +147,7 @@ out = runTrial(struct('Layout', "ReportLayout.mat", 'AgentStarts', "layout", ...
 - `AgentStarts`: `"auto"` (spread evenly), `"layout"` (the start targets stored in the layout file), or target indices such as `[1 5]`.
 - `Seed`: the `rng` seed set before simulating (`-1`, the default, leaves `rng` as it is).
 - `Policy_<property>`: sets a property of the active policy, e.g. `'Policy_dwellRange', [0 0]` turns off the Random Walk or Battery Efficient dwell.
-- `Log = true`: `out.log` holds the per-step time, `J(t)`, agent positions, velocities, accelerations, headings, SOC and energy; `out.metrics` holds per-agent path length `L`, heading change `Θ`, integrated squared acceleration `E_a`, final SOC and energy (`Experiments/metrics/`).
+- `Log = true`: `out.log` holds the per-step time, `J(t)`, agent positions, velocities, accelerations, headings, SOC, battery energy and `J_e` (Second-Order Agents); `out.metrics` holds per-agent path length `L`, heading change `Θ`, integrated squared acceleration `E_a`, final SOC and energy (`Experiments/metrics/`).
 
 `Experiments/runSweep(grid)` runs every combination of parameter values, and `analyzeResults` compares the variants.
 
