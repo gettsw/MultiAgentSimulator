@@ -1,8 +1,11 @@
-classdef PathFollowerController < handle
+classdef TrackingController < handle
     % Feedback law of PhysicalAgent: PD tracking of a reference point that moves along
     % the path (position pRef, velocity vRef, acceleration aRef), with acceleration feedforward,
     %   a = aRef + kp (pRef - p) + kd (vRef - v),   |a| <= maxAccel,
     % so the agent keeps up with the planned speed profile instead of chasing a nearby waypoint.
+    % PhysicalAgent's aRef is the reference's change of velocity over the step: along the path
+    % and, in turns, across it (the turn's normal acceleration), so on the reference the
+    % feedback terms are zero.
     % The defaults (kp = 16, kd = 8) give a critically damped tracking error (time constant
     % 0.25 s). An agent counts as arrived within arrivePosTol of the end of the path once the
     % reference has stopped and its speed is below arriveSpeedTol.

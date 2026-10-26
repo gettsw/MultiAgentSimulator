@@ -1,4 +1,4 @@
-classdef EDRHCPolicy < handle
+classdef EDRHCPolicy < Policy
     % Event-driven receding horizon control (ED-RHC) for persistent monitoring on networks,
     % with the weighted RHCP3 objective of RHC-alpha: S. Welikala and C. G. Cassandras,
     % "Event-driven receding horizon control for distributed persistent monitoring in network
@@ -6,7 +6,7 @@ classdef EDRHCPolicy < handle
     % (below) it is the energy-aware variant of S. Welikala and C. G. Cassandras, "Event-driven
     % receding horizon control of energy-aware dynamic agents for distributed persistent
     % monitoring", arXiv 2102.12963 (IEEE CDC 2021), Secs. III-IV and Apps. D-E (registered as
-    % ED-ORHC-SO and ED-ORHC-FO).
+    % ED-ORHC-SO and ED-ORHC-FO-3).
     %
     % Each agent decides for itself, at its events, using only local information: its target
     % i and the 1-hop neighbors of i (their R, A, B, the lengths of the edges (i, j), and
@@ -26,19 +26,27 @@ classdef EDRHCPolicy < handle
     % simulator; alpha = 0.5 gives the unweighted RHC method of Sec. III.
     %
     % Transit models (property transit):
-    %   "constant speed"  rho_ij = y_ij / maxSpeed, fixed (first-order agents, FO-0)
+    %   "FO-0"            rho_ij = y_ij / maxSpeed, fixed (first-order agents moving at constant
+    %                     speed), or the agent's shortestTransit if that is longer (a
+    %                     PhysicalAgent's own pace)
     %   "SO"              rho_ij is a decision: the RHCP minimizes energyWeight * E(rho) + J_sH
     %                     with the energy E(rho) of the minimum-energy speed profile, 12 y^2/rho^3
     %                     without limits (Theorem 3)
-    %   "FO"              as "SO" with trapezoid profiles, 27 y^2/(2 rho^3) without limits (the
-    %                     paper's FO-3, Theorem 5)
+    %   "FO-3"            as "SO" with trapezoid profiles, 27 y^2/(2 rho^3) without limits
+    %                     (Theorem 5)
+    % (The older names "constant speed" and "FO" still work; see SpeedProfile.canonical.)
     % speedLimit and accelLimit (Inf by default) bound the energy-aware profiles. E(rho) is then
     % that of the bounded minimum-energy profile (Apps. D-E, generalized to both limits; see
-    % SpeedProfile), and rho is no shorter than the limits allow.
+    % SpeedProfile), and rho is no shorter than the limits allow, nor than the agent's
+    % shortestTransit (the shortest transit it can keep; 0 for an AbstractAgent).
+    % The energy E(rho) is the agent's own (Agent.transitEnergyModel): the closed form above
+    % for an AbstractAgent, which follows the profile exactly; for a PhysicalAgent, that of the
+    % reference it will follow (the planned profile where it fits, else its fastest one retimed),
+    % including the turns' acceleration v^2 kappa on curved paths.
     % When an agent leaves, the policy hands it the planned transit time rho_ij; the energy-
     % aware models also hand it their profile and limits. A AbstractAgent then follows the
-    % plan exactly (with profile "constant" it is the first-order agent of the Automatica paper;
-    % with profile "SO" under "constant speed" it is the JS simulator's SO#); a
+    % plan exactly (with profile "FO-0" it is the first-order agent of the Automatica paper;
+    % with profile "SO" under transit "FO-0" it is the JS simulator's SO#); a
     % PhysicalAgent tracks it with feedback.
     % All parameters (alpha, transit, limits, energyWeight, H, ...) are properties, set in
     % runTrial with 'Policy_<name>'.
@@ -51,9 +59,11 @@ classdef EDRHCPolicy < handle
     properties
         alpha = "nominal"    % RHCP3 weight of the next target: "nominal" = 1/|N_i|^2 (N_i
                              % includes i), or a number in [0, 1]; 0.5 = unweighted ED-RHC
-        transit = "constant speed"   % "constant speed", "SO" or "FO" (see above)
-        speedLimit = Inf             % speed limit of the SO / FO profiles
-        accelLimit = Inf             % |acceleration| limit of the SO / FO profiles
+        transit = "FO-0"             % "FO-0", "SO" or "FO-3" (see above)
+        speedLimit = Inf             % speed limit of the SO / FO-3 profiles
+        accelLimit = Inf             % |acceleration| limit of the SO / FO-3 profiles
+        avoidStations = false        % true: never go to or charge at a charging station (stations are
+                                     % left out of the neighborhood unless every neighbor is one)
         energyWeight = 7.68e-3       % weight of the energy objective int u^2 dt (alpha in eqs. 3
                                      % and 20 of the energy-aware paper): its 213.3e-6 for a
                                      % 600 x 600 space, times 36 for our 100 x 100 canvas;
@@ -72,6 +82,11 @@ classdef EDRHCPolicy < handle
     properties (Access = private)
         states               % agent index -> struct(stage, target, covered, hold)
         options              % fmincon options
+        energyModels         % cache: edge, agent and plan -> E(rho) (see energyOf)
+    end
+
+    properties (Constant)
+        agentAssumption = "plans transit"   % what it assumes of the agents' motion (see ComponentRegistry.assumptionOf)
     end
 
     properties (Constant, Access = private)
@@ -83,12 +98,13 @@ classdef EDRHCPolicy < handle
         function obj = EDRHCPolicy(opts)
             arguments
                 opts.Alpha = "nominal"
-                opts.Transit string {mustBeMember(opts.Transit, ["constant speed", "SO", "FO"])} = "constant speed"
+                opts.Transit string = "FO-0"
             end
             obj.alpha = opts.Alpha;
             obj.transit = opts.Transit;
             obj.states = containers.Map('KeyType', 'double', 'ValueType', 'any');
             obj.options = optimoptions('fmincon', 'Display', 'off', 'Algorithm', 'sqp');
+            obj.energyModels = containers.Map('KeyType', 'char', 'ValueType', 'any');
         end
 
         function resetReservations(obj)
@@ -101,6 +117,7 @@ classdef EDRHCPolicy < handle
             % Called when the agent has no path and no dwell left: on arrival (or at t = 0), and
             % when an active or inactive time is over
             cmd = struct();
+            if obj.avoidStations, agent.chargeAllowed = false; end
             s = obj.stateOf(agent);
             if s.stage == "travel"
                 u = obj.solve(1, agent, model, adj, curIdx, simTime);
@@ -116,27 +133,7 @@ classdef EDRHCPolicy < handle
                     return;
                 end
             end
-            [j, rho] = obj.solve(3, agent, model, adj, curIdx, simTime);
-            if isempty(j)
-                % Every neighbor is covered: stay at i (still servicing it) and try RHCP3 again;
-                % the agent leaves as soon as a neighbor is uncovered, or solves RHCP2 first if
-                % R_i reaches 0 meanwhile (as the JS simulator does)
-                stage = s.stage;
-                if stage == "travel", stage = "active"; end
-                obj.dwell(agent, model, adj, curIdx, stage, obj.recheckTime, true);
-                return;
-            end
-            obj.states(agent.index) = struct('stage', "travel", 'target', j, 'covered', [], 'hold', false);
-            if isprop(agent, 'transitTime')   % hand the planned transit over to the agent
-                agent.transitTime = rho;
-                if obj.transit == "constant speed"   % the agent's own profile over rho
-                    agent.transitProfile = ""; agent.transitLimits = [Inf Inf];
-                else
-                    agent.transitProfile = obj.transit; agent.transitLimits = [obj.speedLimit, obj.accelLimit];
-                end
-            end
-            cmd.kind = "move";
-            cmd.targetIdx = j;
+            cmd = obj.depart(agent, model, adj, curIdx, simTime);
         end
 
         function onStep(obj, agent, model, simTime)
@@ -164,6 +161,10 @@ classdef EDRHCPolicy < handle
             if nargin < 7, adj = model.buildAdjacency(); end
             nbrs = find(adj(i, :));
             avail = nbrs(~obj.coveredNeighbors(agent, model, adj, i));
+            if obj.avoidStations   % stations only when there is no other way on
+                st = arrayfun(@(k) isa(model.targets(k), 'ChargingStation'), nbrs);
+                if ~all(st), avail = avail(~ismember(avail, nbrs(st))); end
+            end
             hood = [i, avail];                    % the neighborhood without covered neighbors
             tg = model.targets(hood);
             R = [tg.R];
@@ -179,18 +180,27 @@ classdef EDRHCPolicy < handle
             end
             best = struct('cost', inf, 'j', [], 'x', zeros(1, 4), 'rho', NaN, 'uBi', uBi);
             for k = 2:numel(hood)
-                y = obj.pathLength(model, i, hood(k));
+                [y, pts] = obj.pathLength(model, i, hood(k));
                 rho0 = y / agent.state.maxSpeed;
-                if obj.transit == "constant speed"
+                rhoAgent = agent.shortestTransit(pts);   % what the agent can keep (0: any)
+                if obj.transit == "FO-0"
+                    rho0 = max(rho0, rhoAgent);
                     if rho0 > obj.H, continue; end
                     rhoRange = [rho0 rho0];
                 else
-                    rhoRange = [max(obj.minTransit * rho0, ...
-                        SpeedProfile.minTransit(y, obj.speedLimit, obj.accelLimit)), obj.H];
+                    rhoRange = [max([obj.minTransit * rho0, ...
+                        SpeedProfile.minTransit(y, obj.speedLimit, obj.accelLimit), rhoAgent]), obj.H];
                 end
                 d = struct('R', R, 'A', A, 'B', B, 'j', k, 'rho', rho0, 'w', weights, ...
                     'y', y, 'vb', obj.speedLimit, 'ub', obj.accelLimit);
-                for c = obj.cases(kind, d, uBi, rhoRange(1))
+                rhoRange = obj.transitRange(agent, model, i, hood(k), pts, rhoRange);
+                if isempty(rhoRange), continue; end   % no affordable transit to this neighbor
+                if rhoRange(2) <= rhoRange(1), d.rho = rhoRange(1); end   % one transit time left
+                if obj.transit ~= "FO-0"   % the energy the agent draws, E(rho)
+                    d.E = obj.energyOf(agent, model, i, hood(k), pts, y, rhoRange);
+                end
+                [ac, bc] = obj.planConstraint(agent, model, i, hood(k), d, rhoRange);
+                for c = obj.cases(kind, d, uBi, rhoRange(1), ac, bc)
                     [cost, x, rho] = obj.solveCase(d, c, rhoRange);
                     if cost < best.cost
                         best = struct('cost', cost, 'j', hood(k), 'x', x, 'rho', rho, 'uBi', uBi);
@@ -246,7 +256,89 @@ classdef EDRHCPolicy < handle
         end
     end
 
-    methods (Access = private)
+    methods (Access = protected)
+        function covered = coveredNeighbors(~, agent, model, adj, i)
+            % For each neighbor of i (in index order): is another agent at it or heading to it?
+            nbrs = find(adj(i, :));
+            covered = false(size(nbrs));
+            for b = 1:numel(model.agents)
+                other = model.agents(b);
+                if other ~= agent
+                    covered = covered | nbrs == other.current_target_idx;
+                end
+            end
+        end
+
+        function [a, b] = planConstraint(~, ~, ~, ~, ~, ~, ~)
+            % Extra constraints a * [u_i v_i u_j v_j rho]' <= b (one row each) on every plan of
+            % an RHCP at i that visits neighbor j (args: agent, model, i, j, d, rhoRange). None by
+            % default (a = []); BatteryAwareRHCPolicy bounds the plan's energy
+            a = []; b = [];
+        end
+
+        function rhoRange = transitRange(~, ~, ~, ~, ~, ~, rhoRange)
+            % The transit times [lo hi] searched for neighbor j (args: agent, model, i, j, pts,
+            % rhoRange); [] makes j unaffordable. Unchanged by default
+        end
+
+        function J = planObjective(obj, d, P)
+            % The cost of plans P (rows [ui vi uj vj], or [ui vi uj vj rho] when rho is a
+            % decision) that the RHCP minimizes: planCost plus the energy term energyWeight *
+            % E(rho), scaled like planCost. With the weights [1 1] of RHCP1 and RHCP2 planCost is
+            % J_sH; with the RHCP3 weights [alpha, 1 - alpha] it is J_sH / 2 at alpha = 0.5, so the
+            % energy term is halved there and alpha = 0.5 gives the paper's RHCP3 objective
+            % J_sH + energyWeight * E
+            if size(P, 2) < 5
+                J = obj.planCost(d, P);
+            else
+                J = obj.planCost(d, P) + sum(d.w) / 2 * obj.energyWeight * d.E(P(:, 5));
+            end
+        end
+
+        function cmd = depart(obj, agent, model, adj, curIdx, simTime)
+            % RHCP3: the next target j and the transit to it, handed over to the agent
+            cmd = struct();
+            s = obj.stateOf(agent);
+            [j, rho] = obj.solve(3, agent, model, adj, curIdx, simTime);
+            if isempty(j)
+                % Every neighbor is covered: stay at i (still servicing it) and try RHCP3 again;
+                % the agent leaves as soon as a neighbor is uncovered, or solves RHCP2 first if
+                % R_i reaches 0 meanwhile (as the JS simulator does)
+                stage = s.stage;
+                if stage == "travel", stage = "active"; end
+                obj.dwell(agent, model, adj, curIdx, stage, obj.recheckTime, true);
+                return;
+            end
+            obj.states(agent.index) = struct('stage', "travel", 'target', j, 'covered', [], 'hold', false);
+            if isprop(agent, 'transitTime')   % hand the planned transit over to the agent
+                agent.transitTime = rho;
+                if obj.transit == "FO-0"   % the agent's own profile over rho
+                    agent.transitProfile = ""; agent.transitLimits = [Inf Inf];
+                else
+                    agent.transitProfile = obj.transit; agent.transitLimits = [obj.speedLimit, obj.accelLimit];
+                end
+            end
+            cmd.kind = "move";
+            cmd.targetIdx = j;
+        end
+
+        function forgetAgent(obj, index)
+            % Drop the agent's stage: its next plan starts as on arrival (RHCP1)
+            if isKey(obj.states, index), remove(obj.states, index); end
+        end
+    end
+
+    methods
+        function set.transit(obj, t)
+            % "FO-0", "SO" or "FO-3"; the older names "constant speed" and "FO" still work
+            t = SpeedProfile.canonical(t);
+            assert(any(t == SpeedProfile.names), 'EDRHCPolicy:Transit', ...
+                'Unknown transit model "%s" (use %s)', t, strjoin(SpeedProfile.names, ", "));
+            obj.transit = t;
+        end
+    end
+
+    methods (Access = protected)
         function s = stateOf(obj, agent)
             if isKey(obj.states, agent.index)
                 s = obj.states(agent.index);
@@ -261,18 +353,6 @@ classdef EDRHCPolicy < handle
             agent.dwellRemaining = duration;
             obj.states(agent.index) = struct('stage', stage, 'target', i, ...
                 'covered', obj.coveredNeighbors(agent, model, adj, i), 'hold', hold);
-        end
-
-        function covered = coveredNeighbors(~, agent, model, adj, i)
-            % For each neighbor of i (in index order): is another agent at it or heading to it?
-            nbrs = find(adj(i, :));
-            covered = false(size(nbrs));
-            for b = 1:numel(model.agents)
-                other = model.agents(b);
-                if other ~= agent
-                    covered = covered | nbrs == other.current_target_idx;
-                end
-            end
         end
 
         function [out, rho] = solve(obj, kind, agent, model, adj, i, simTime)
@@ -312,9 +392,10 @@ classdef EDRHCPolicy < handle
             w = [a, 1 - a];
         end
 
-        function cs = cases(obj, kind, d, uBi, rhoLo)
+        function cs = cases(obj, kind, d, uBi, rhoLo, ac, bc)
             % The smooth cases of RHCP<kind>, each as [ui vi uj vj] = M*[x; y; rho] + c over
-            % x, y >= 0 with Aineq*[x; y; rho] <= bineq (paper Sec. III, eqs. 20, 36, 46)
+            % x, y >= 0 with Aineq*[x; y; rho] <= bineq (paper Sec. III, eqs. 20, 36, 46), and
+            % the extra constraint ac * [ui vi uj vj rho]' <= bc if ac is not empty
             Rj = d.R(d.j); Aj = d.A(d.j); Bj = d.B(d.j);
             H = obj.H;
             if Bj > Aj
@@ -358,6 +439,12 @@ classdef EDRHCPolicy < handle
                                 [1 + c1 1 1 + c1], H - uBi - c00 - c1 * uBi, true);
                         end
                     end
+            end
+            if nargin > 5 && ~isempty(ac)
+                for k = 1:numel(cs)
+                    cs(k).Aineq = [cs(k).Aineq; ac(:, 1:4) * cs(k).M + [zeros(size(ac, 1), 2), ac(:, 5)]];
+                    cs(k).bineq = [cs(k).bineq; bc(:) - ac(:, 1:4) * cs(k).c'];
+                end
             end
             % drop empty cases: x = y = 0 with the shortest transit is in every nonempty case
             cs = cs(arrayfun(@(c) all(c.bineq - c.Aineq(:, 3) * rhoLo >= -obj.tol), cs));
@@ -410,6 +497,11 @@ classdef EDRHCPolicy < handle
             if isempty(Z), Z = lb; end
             costs = cost3(Z);
             [~, k] = min(costs);
+            if ~isfinite(costs(k))   % no plan of this case has a defined cost: infeasible
+                cost = Inf; x = Z(k, :) * M' + c0;
+                if fixed, rho = rhoRange(1); else, rho = Z(k, 3); end
+                return;
+            end
             [z, fz] = fmincon(@(z) cost3(z(:)'), Z(k, :)', Ain, bin, [], [], lb', ub', [], obj.options);
             if fz <= costs(k) && all(z(:)' >= lb - obj.tol) && all(Ain * z <= bin + obj.tol)
                 cost = fz; z = max(z(:)', lb);
@@ -420,21 +512,34 @@ classdef EDRHCPolicy < handle
             if fixed, rho = rhoRange(1); else, rho = z(3); end
 
             function J = cost3(Z)
-                % planCost plus the energy term energyWeight * E(rho), scaled like planCost: with
-                % the weights [1 1] of RHCP1 and RHCP2 planCost is J_sH; with the RHCP3 weights
-                % [alpha, 1 - alpha] it is J_sH / 2 at alpha = 0.5, so the energy term is halved
-                % there and alpha = 0.5 gives the paper's RHCP3 objective J_sH + energyWeight * E
                 if fixed
-                    J = obj.planCost(d, Z * M' + c0);
+                    J = obj.planObjective(d, Z * M' + c0);
                 else
-                    r = Z(:, 3);
-                    J = obj.planCost(d, [Z * M' + c0, r]) + sum(d.w) / 2 * obj.energyWeight ...
-                        * SpeedProfile.energy(obj.transit, d.y, r, d.vb, d.ub);
+                    J = obj.planObjective(d, [Z * M' + c0, Z(:, 3)]);
                 end
             end
         end
 
-        function y = pathLength(~, model, i, j)
+        function f = energyOf(obj, agent, model, i, j, pts, y, rhoRange)
+            % The agent's energy objective int |a|^2 dt for the transit i -> j as a function of
+            % rho (Agent.transitEnergyModel: the closed form E(y, rho) for an AbstractAgent; a
+            % PhysicalAgent's own reference, turns included), cached per edge, agent kind and plan
+            if norm(pts(1, :) - model.targets(i).position) > norm(pts(end, :) - model.targets(i).position)
+                pts = flipud(pts);                   % from i, as the agent will cross it
+            end
+            key = sprintf('%s|%d>%d|%d|%.10g|%.10g,%.10g|%s|%.10g|%.10g|%.10g|%.10g', ...
+                agent.energyModelKey(), i, j, size(pts, 1), y, pts(end, 1), pts(end, 2), ...
+                obj.transit, obj.speedLimit, obj.accelLimit, rhoRange(1), rhoRange(2));
+            if isKey(obj.energyModels, key)
+                f = obj.energyModels(key);
+            else
+                f = agent.transitEnergyModel(pts, y, obj.transit, obj.speedLimit, obj.accelLimit, rhoRange);
+                obj.energyModels(key) = f;
+            end
+        end
+
+        function [y, pts] = pathLength(~, model, i, j)
+            % Length y of the path of edge (i, j), and its points
             pts = model.findEdge(i, j).curvePoints;
             y = sum(vecnorm(diff(pts, 1, 1), 2, 2));
         end

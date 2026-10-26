@@ -13,14 +13,35 @@ classdef ScenarioModel < handle
         uncertaintyMode = 'Static Uniform'      % constant A_i, as in the paper; see UncertaintyModes
         pathPlanner
         agentFactory
+        targetFactory           % @(idx, pos) target: the registered type targetType
+        targetType = "Uncertainty Target"   % target type (ComponentRegistry name) of the targets
+        metrics = {}            % Metric objects updated every step; the first is the objective
+                                % plotted in the GUI (default: AverageUncertainty, J(t))
         bounds = [0 100 0 100]  % [xMin xMax yMin yMax]
+        collisions = []         % per agent: steps in which its motion crossed a wall (it was then
+                                % stopped at the wall); planned paths avoid walls, so this stays 0
+                                % unless an agent leaves its path
         detectionRadius = 1.2   % an agent at rest (not in transit) this close to a target services it
-        agentAccel = 15         % maxAccel of agents added next
-        agentProfile = "constant"   % speed profile of agents added next ("constant", "SO", "FO")
+        agentSpec = AgentSpec() % spec (settings) of the agents added next; the type is agentFactory
+        background = ""         % background image of the layout (file name; see backgroundFile)
+        registry                % ComponentRegistry (policy assumptions)
     end
 
     properties (Constant)
         UncertaintyModes = {'Static Uniform', 'Static Priority Target', 'Dynamic Uncertainty'}
+    end
+
+    methods (Static)
+        function f = backgroundFile(name)
+            % Full path of a layout's background image: a file in Configurations/backgrounds/,
+            % in the project root, or a full path ("" when there is none)
+            f = "";
+            if strlength(string(name)) == 0, return; end
+            root = fileparts(fileparts(mfilename('fullpath')));
+            for c = [fullfile(root, 'Configurations', 'backgrounds', name), fullfile(root, name), string(name)]
+                if isfile(c), f = string(c); return; end
+            end
+        end
     end
 
     properties (Dependent)
@@ -35,9 +56,12 @@ classdef ScenarioModel < handle
             end
             obj.pathPlanner  = pathPlanner;
             obj.agentFactory = agentFactory;
+            obj.targetFactory = @(idx, pos) Target(idx, pos);
+            obj.metrics = {AverageUncertainty()};
 
             % One instance per registered policy, kept for the model's lifetime
             reg = ComponentRegistry();
+            obj.registry = reg;
             obj.policyMap = containers.Map('KeyType','char','ValueType','any');
             names = reg.keysFor('policy');
             for k = 1:numel(names)
@@ -59,6 +83,66 @@ classdef ScenarioModel < handle
             obj.agentFactory = factory;
         end
 
+        function setAgentType(obj, name)
+            % The registered agent type of the agents added next
+            obj.agentFactory = obj.registry.factoryFor('agenttype', char(name));
+            obj.agentSpec.type = string(name);
+        end
+
+        function setTargetType(obj, name)
+            % The registered target type of every target: the scenario is rebuilt with targets
+            % of that type (same positions, rates, edges, walls and agents)
+            obj.targetFactory = obj.registry.factoryFor('targettype', char(name));
+            obj.targetType = string(name);
+            if ~isempty(obj.targets)
+                s = obj.exportLayout();
+                obj.importLayout(s);
+            end
+        end
+
+        function setMetrics(obj, names)
+            % The registered metrics to compute, the first one being the objective
+            names = string(names);
+            obj.metrics = arrayfun(@(n) feval(obj.registry.factoryFor('metric', char(n))), ...
+                names, 'UniformOutput', false);
+            for k = 1:numel(obj.metrics), obj.metrics{k}.reset(obj); end
+        end
+
+        function v = metricValues(obj, simTime)
+            % Current value of every metric (struct; field names from the metrics' class names)
+            v = struct();
+            for k = 1:numel(obj.metrics)
+                v.(class(obj.metrics{k})) = obj.metrics{k}.value(obj, simTime);
+            end
+        end
+
+        function msg = checkAgentFit(obj)
+            % "" when the agents suit the active policy, else a note on what to expect
+            msg = "";
+            if isempty(obj.agents), return; end
+            name = string(obj.activePolicy);
+            assumption = obj.registry.assumptionOf(name, obj.policy);
+            physical = arrayfun(@(a) isa(a, 'PhysicalAgent'), obj.agents);
+            shaped = arrayfun(@(a) ~isa(a, 'PhysicalAgent') && a.profile ~= "FO-0", obj.agents);
+            switch assumption
+                case "FO-0"
+                    if any(shaped)
+                        msg = name + " plans transits as path length / speed; agents with SO or FO-3 profiles take 1.5x longer than planned.";
+                    end
+                    if any(physical)
+                        msg = strtrim(msg + " " + name + " assumes FO-0 (constant-speed) agents; physical agents lag behind its plans.");
+                    end
+                case "plans transit"
+                    if any(physical)
+                        msg = name + " hands each transit's plan to the agents; physical agents track it with some lag.";
+                    end
+            end
+            n = obj.registry.requiredAgents(name);
+            if n > 0 && numel(obj.agents) ~= n
+                msg = strtrim(msg + " " + sprintf("%s is built for exactly %d agents (this scenario has %d).", name, n, numel(obj.agents)));
+            end
+        end
+
         function setUncertaintyMode(obj, mode)
             if ischar(mode) || isstring(mode)
                 % Target treats any unknown name as a spiking mode, so reject typos here
@@ -70,7 +154,7 @@ classdef ScenarioModel < handle
 
         function setActivePolicy(obj, policyName)
             if ischar(policyName) || isstring(policyName)
-                obj.activePolicy = char(policyName);
+                obj.activePolicy = char(obj.registry.resolve(policyName));   % older names still work
             end
         end
 
@@ -148,6 +232,7 @@ classdef ScenarioModel < handle
                         end
                     end
                 end
+                p0 = a.state.pos;
                 if a.dwellRemaining > 0
                     % Dwelling: hold at the current target before following the new path
                     a.dwellRemaining = max(0, a.dwellRemaining - dtSim);
@@ -155,7 +240,26 @@ classdef ScenarioModel < handle
                 else
                     a.update(dtSim);
                 end
+                obj.stopAtWalls(k, a, p0);
             end
+        end
+
+        function stopAtWalls(obj, k, a, p0)
+            % If agent k's motion in this step (p0 to its new position) crossed a wall, it stops
+            % just before the wall and the collision is counted
+            p1 = a.state.pos;
+            if isempty(obj.walls) || isequal(p0, p1), return; end
+            W = obj.walls; c = W(:, 1:2); d = W(:, 3:4); v = p1 - p0;
+            den = (d(:, 2) - c(:, 2)) * v(1) - (d(:, 1) - c(:, 1)) * v(2);
+            ua = ((d(:, 1) - c(:, 1)) .* (p0(2) - c(:, 2)) - (d(:, 2) - c(:, 2)) .* (p0(1) - c(:, 1))) ./ den;
+            ub = (v(1) * (p0(2) - c(:, 2)) - v(2) * (p0(1) - c(:, 1))) ./ den;
+            hit = abs(den) > 1e-12 & ua > 1e-9 & ua <= 1 & ub >= 0 & ub <= 1;
+            if ~any(hit), return; end
+            t = min(ua(hit));
+            a.state.pos = p0 + max(0, t - 1e-3) * v;
+            a.state.vel = [0 0];
+            if numel(obj.collisions) < k, obj.collisions(k) = 0; end
+            obj.collisions(k) = obj.collisions(k) + 1;
         end
 
         function holdAgent(~, a, dtSim)
@@ -188,8 +292,10 @@ classdef ScenarioModel < handle
                 end
             end
 
-            % 3. COMPUTE RUNNING TIME-AVERAGED COST J
-            JNow = obj.cumUncertaintyIntegral / max(eps, simTime);
+            % 3. UPDATE THE METRICS; THE FIRST ONE (DEFAULT: J(t), THE RUNNING TIME-AVERAGED
+            % UNCERTAINTY) IS THE OBJECTIVE
+            for k = 1:numel(obj.metrics), obj.metrics{k}.update(obj, simTime, dtSim); end
+            JNow = obj.metrics{1}.value(obj, simTime);
         end
         function [e, ok, msg] = addEdgeByTargets(obj, t1Idx, t2Idx)
             e = Edge.empty; ok = false; msg = "";
@@ -200,6 +306,9 @@ classdef ScenarioModel < handle
             e = Edge(idx, [obj.targets(t1Idx), obj.targets(t2Idx)], pathPoints);
             obj.edges(end+1) = e;
             ok = true;
+            if isprop(obj.pathPlanner, 'noRoute') && obj.pathPlanner.noRoute
+                msg = sprintf("No wall-free route from T%d to T%d: the edge is a straight line through the walls.", t1Idx, t2Idx);
+            end
         end
 
         function path = planShortestPath(obj, pStart, pEnd)
@@ -220,6 +329,27 @@ classdef ScenarioModel < handle
             s.agentSpeed = arrayfun(@(a) a.state.maxSpeed, obj.agents);      % max speed per agent
             s.agentAccel = arrayfun(@(a) a.state.maxAccel, obj.agents);      % max acceleration per agent
             s.agentProfile = arrayfun(@(a) a.profile, obj.agents);           % speed profile per agent
+            s.agentBatteryWh = arrayfun(@(a) a.battery.capacityWh, obj.agents);   % battery capacity per agent
+            s.agentStopWhenEmpty = arrayfun(@(a) double(a.stopWhenEmpty), obj.agents);  % stops when empty
+            % Full power model and turn limit (energy-aware paper), stored only when set
+            c2 = arrayfun(@(a) a.battery.c2, obj.agents);
+            an = arrayfun(@(a) a.maxNormalAccel, obj.agents);
+            r0 = arrayfun(@(a) a.battery.R0, obj.agents);
+            if any(c2 ~= 0), s.agentMotorC2 = c2; end                        % Battery c2 per agent
+            b0 = Battery();                                                   % c1, c3 if not the defaults
+            c1 = arrayfun(@(a) a.battery.c1, obj.agents); c3 = arrayfun(@(a) a.battery.c3, obj.agents);
+            if any(c1 ~= b0.c1) || any(c3 ~= b0.c3), s.agentMotorC1 = c1; s.agentMotorC3 = c3; end
+            if any(isfinite(an)), s.agentMaxNormalAccel = an; end            % a_n per agent
+            if any(r0 ~= 0)                                                   % battery losses
+                s.agentBatteryR0 = r0; s.agentBatteryVoc = arrayfun(@(a) a.battery.Voc, obj.agents);
+            end
+            st = find(arrayfun(@(t) isa(t, 'ChargingStation'), obj.targets));
+            s.chargers = st;                                                  % charging stations (targets)
+            s.chargePower = arrayfun(@(k) obj.targets(k).chargePower, st);    % their power [W]
+            docks = arrayfun(@(k) obj.targets(k).docks, st);
+            if any(isfinite(docks)), s.chargerDocks = docks; end              % their docks (if limited)
+            s.background = obj.background;                                    % background image file
+            s.targetType = obj.targetType;                                    % target type (registry name)
             s.uncertaintyMode = obj.uncertaintyMode;
             s.A = [obj.targets.A_uniformBase].';   % base growth rate A_i per target
             s.B = [obj.targets.B].';               % decay rate B_i per agent, per target
@@ -230,8 +360,23 @@ classdef ScenarioModel < handle
             % Fields missing from older files keep their defaults; A, B, R0 and agentSpeed may
             % also be scalars that apply to every target / agent
             obj.clearAll();
+            if isfield(s, 'targetType') && ismember(string(s.targetType), obj.registry.keysFor('targettype'))
+                obj.targetFactory = obj.registry.factoryFor('targettype', char(s.targetType));
+                obj.targetType = string(s.targetType);
+            end
+            stations = [];
+            if isfield(s, 'chargers'), stations = s.chargers(:)'; end
             for k = 1:size(s.targets, 1)
-                t = obj.addTarget(s.targets(k,:));
+                if ismember(k, stations)                % a charging station
+                    t = ChargingStation(k, s.targets(k,:));
+                    p = layoutValue(s, 'chargePower', find(stations == k, 1));
+                    if ~isempty(p), t.chargePower = p; end
+                    m = layoutValue(s, 'chargerDocks', find(stations == k, 1));
+                    if ~isempty(m), t.docks = m; end
+                    obj.targets(end+1) = t;
+                else
+                    t = obj.addTarget(s.targets(k,:));
+                end
                 t.setRates(layoutValue(s, 'A', k), layoutValue(s, 'B', k), layoutValue(s, 'R0', k));
             end
             if isfield(s, 'walls'), obj.walls = s.walls; end
@@ -239,31 +384,54 @@ classdef ScenarioModel < handle
                 obj.addEdgeByTargets(double(s.edges(k,1)), double(s.edges(k,2)));
             end
             if isfield(s, 'uncertaintyMode'), obj.setUncertaintyMode(s.uncertaintyMode); end
+            obj.background = "";
+            if isfield(s, 'background'), obj.background = string(s.background); end
             if isfield(s, 'agentStarts')
                 for k = 1:numel(s.agentStarts)
+                    % each agent: the current type and spec, with the layout's stored settings
+                    spec = obj.agentSpec;
                     speed = layoutValue(s, 'agentSpeed', k);
-                    if isempty(speed), speed = 15; end   % GUI default speed
-                    a = obj.addAgentOnTarget(obj.targets(s.agentStarts(k)).position, speed, 1e-6);
+                    if ~isempty(speed), spec.maxSpeed = speed; end
                     accel = layoutValue(s, 'agentAccel', k);
-                    if ~isempty(accel), a.state.maxAccel = accel; end
+                    if ~isempty(accel), spec.maxAccel = accel; end
                     prof = layoutValue(s, 'agentProfile', k);
-                    if ~isempty(prof), a.profile = prof; end
+                    if ~isempty(prof), spec.profile = prof; end
+                    wh = layoutValue(s, 'agentBatteryWh', k);
+                    if ~isempty(wh), spec.batteryWh = wh; end
+                    stop = layoutValue(s, 'agentStopWhenEmpty', k);
+                    if ~isempty(stop), spec.stopWhenEmpty = stop; end
+                    for f = ["MotorC1", "MotorC2", "MotorC3", "MaxNormalAccel", "BatteryR0", "BatteryVoc"]   % full power model
+                        val = layoutValue(s, char("agent" + f), k);
+                        if ~isempty(val), spec.(lower(extractBefore(f, 2)) + extractAfter(f, 1)) = val; end
+                    end
+                    obj.addAgentOnTarget(obj.targets(s.agentStarts(k)).position, spec.maxSpeed, 1e-6, spec);
                 end
             end
         end
 
-        function t = addTarget(obj, pos)
-            t = Target(numel(obj.targets) + 1, pos);
+        function t = addStation(obj, pos, chargePower, docks)
+            % A charging station (ChargingStation) at pos, numbered like a target; connect it
+            % with edges as any target. chargePower [W] and docks default to the station's own
+            t = ChargingStation(numel(obj.targets) + 1, pos);
+            if nargin > 2, t.chargePower = chargePower; end
+            if nargin > 3, t.docks = docks; end
             obj.targets(end+1) = t;
         end
 
-        function [a, ok, msg] = addAgentOnTarget(obj, clickPos, speed, tol)
+        function t = addTarget(obj, pos)
+            t = obj.targetFactory(numel(obj.targets) + 1, pos);
+            obj.targets(end+1) = t;
+        end
+
+        function [a, ok, msg] = addAgentOnTarget(obj, clickPos, speed, tol, spec)
+            % A new agent on the target nearest clickPos, of the current type, with spec
+            % (default: agentSpec) and maximum speed speed
             a = []; ok = false; msg = "";
             [tIdx, dist] = obj.findNearestTarget(clickPos);
             if isempty(tIdx) || dist > tol, msg = "Click near target"; return; end
-            a = obj.agentFactory(numel(obj.agents)+1, obj.targets(tIdx).position, speed);
-            a.state.maxAccel = obj.agentAccel;
-            a.profile = obj.agentProfile;
+            if nargin < 5, spec = obj.agentSpec; end
+            spec.maxSpeed = speed;
+            a = spec.spawn(numel(obj.agents)+1, obj.targets(tIdx).position, obj.agentFactory);
             a.current_target_idx = tIdx;
             a.initialTargetIdx = tIdx;
             a.initialPosition = a.state.pos;
@@ -276,6 +444,7 @@ classdef ScenarioModel < handle
             obj.walls = []; obj.cumUncertaintyIntegral = 0; obj.hasLastSample = false;
             obj.lastLogTime = 0; obj.lastUncertainty = 0;
             obj.resetPolicyReservations();
+            for k = 1:numel(obj.metrics), obj.metrics{k}.reset(obj); end
         end
 
         function resetPolicyReservations(obj)
@@ -294,6 +463,8 @@ classdef ScenarioModel < handle
             for k = 1:numel(obj.agents), obj.agents(k).resetToInitial(); end
             for t = 1:numel(obj.targets), obj.targets(t).reset(); end
             obj.resetPolicyReservations();
+            for k = 1:numel(obj.metrics), obj.metrics{k}.reset(obj); end
+            obj.collisions = zeros(1, numel(obj.agents));
         end
 
         function [idx, dist] = findNearestTarget(obj, pos)

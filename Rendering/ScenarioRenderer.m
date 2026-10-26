@@ -15,11 +15,12 @@ classdef ScenarioRenderer < handle
             hold(obj.ax, 'off');
         end
 
-        function loadBackgroundImage(obj, file)
-            % Asks for the image file unless one is given
+        function file = loadBackgroundImage(obj, file)
+            % Shows an image under the scenario, stretched to the canvas; asks for the file
+            % unless one is given. Returns the file ("" if cancelled).
             if nargin < 2
                 [f, d] = uigetfile({'*.jpg;*.png;*.bmp;*.tif', 'Image Files (*.jpg, *.png, *.bmp, *.tif)'});
-                if isequal(f, 0), return; end
+                if isequal(f, 0), file = ""; return; end
                 file = fullfile(d, f);
             end
             img = imread(file);
@@ -34,6 +35,13 @@ classdef ScenarioRenderer < handle
             set(obj.ax, 'Layer', 'top');
             uistack(obj.bgImageHandle, 'bottom');
             hold(obj.ax, 'off');
+        end
+
+        function clearBackground(obj)
+            if ~isempty(obj.bgImageHandle) && isgraphics(obj.bgImageHandle)
+                delete(obj.bgImageHandle);
+            end
+            obj.bgImageHandle = [];
         end
 
         function clearAxes(obj)

@@ -16,6 +16,7 @@ classdef ObjectivePlotWindow < handle
         newestLineWidth = 2.8
         oldestLineWidth = 1.6
         minVisibility = 0.45
+        yFloor = 10          % smallest top of the y-axis (the objective's plotMax)
     end
     
     methods
@@ -37,6 +38,13 @@ classdef ObjectivePlotWindow < handle
                 'ButtonPushedFcn', @(~,~)obj.clearAllTrials());
         end
         
+        function setObjective(obj, label, plotMax)
+            % Label and initial y-axis top for the objective (a Metric); clears the plot
+            ylabel(obj.ax, label);
+            obj.yFloor = plotMax;
+            obj.clearAllTrials();
+        end
+
         function reset(obj)
             % Prepares state for a clean reset/rewind without wiping existing run lines
             obj.tData = [];
@@ -56,7 +64,7 @@ classdef ObjectivePlotWindow < handle
             obj.jData = [];
             obj.lastT = -Inf;
             obj.lastXMax = 10;
-            obj.lastYMax = 10;
+            obj.lastYMax = obj.yFloor;
             xlim(obj.ax, [0 obj.lastXMax]);
             ylim(obj.ax, [0 obj.lastYMax]);
             legend(obj.ax, 'off');
@@ -126,7 +134,7 @@ classdef ObjectivePlotWindow < handle
                 jMax = max(obj.jData);
                 if jMax <= 0, jMax = 1; end
                 if jMax > obj.lastYMax * 0.9
-                    obj.lastYMax = max(10, jMax * 1.1);
+                    obj.lastYMax = max(obj.yFloor, jMax * 1.1);
                     ylim(obj.ax, [0 obj.lastYMax]);
                 end
             end

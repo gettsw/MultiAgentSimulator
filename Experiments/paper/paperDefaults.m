@@ -1,12 +1,12 @@
 function p = paperDefaults()
 % runTrial parameters of the simulator paper's reference scenario (Sec. IV): ReportLayout.mat
-% (Stevens Smart Lab, 11 targets, 10 edges, 3 walls) with 5 agents on its stored start targets,
-% constant growth A = 1 on every target, decay B = 10 per agent, R(0) = 0, max speed 15,
-% T = 500 s, dt = 0.05 s. Each experiment overrides Policy, Planner and AgentType.
+% (Stevens Smart Lab, 11 targets, 10 edges, 3 walls plus 89 traced from the floor plan) with
+% 5 agents on its stored start targets, constant growth A = 1 on every target, decay B = 10 per
+% agent, R(0) = 0, max speed 15, T = 500 s, dt = 0.05 s. Each experiment overrides Policy, Planner and AgentType.
 p = trialDefaults();
 p.Layout = "ReportLayout.mat";
 p.AgentStarts = "layout";
-p.Policy = "Battery Efficient";
+p.Policy = "ED-RHC";
 p.Planner = "Dijkstra Corners";
 p.AgentType = "Physical Agent";
 p.UncertaintyMode = "Static Uniform";

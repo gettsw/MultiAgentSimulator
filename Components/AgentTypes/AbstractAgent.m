@@ -3,10 +3,10 @@ classdef AbstractAgent < Agent
     % abstract class): follows its path by arc length exactly as its speed profile prescribes,
     % so every transit takes exactly the planned time and the agent is at rest on the targets.
     % This is the agent model of the event-driven RHC papers:
-    %   profile "constant"  a first-order agent moving at maxSpeed (Welikala and Cassandras,
-    %                       Automatica 2021; transit time = path length / maxSpeed)
-    %   profile "SO", "FO"  a second-order agent with the energy-optimal profiles of Welikala and
-    %                       Cassandras, arXiv 2102.12963 (heading from the path, Theorem 2)
+    %   profile "FO-0"        a first-order agent moving at maxSpeed (Welikala and Cassandras,
+    %                         Automatica 2021; transit time = path length / maxSpeed)
+    %   profile "SO", "FO-3"  a second-order agent with the energy-optimal profiles of Welikala
+    %                         and Cassandras, arXiv 2102.12963 (heading from the path, Theorem 2)
     % The profile, maxSpeed and maxAccel are set per agent (GUI: Agent Speed / Agent Accel /
     % Speed Profile; runTrial: AgentSpeed, Agent_profile, Agent_maxAccel). Energy-aware RHC
     % policies hand over the profile, transit time and limits of each transit. On curved paths
@@ -23,7 +23,7 @@ classdef AbstractAgent < Agent
                 index
                 position
                 maxSpeed
-                opts.Profile string = "constant"
+                opts.Profile string = "FO-0"
             end
             obj@Agent(index, position, maxSpeed);
             obj.profile = opts.Profile;
@@ -77,7 +77,7 @@ classdef AbstractAgent < Agent
         function startLeg(obj)
             obj.leg = obj.beginLeg();
             P = obj.leg.P;
-            if P.name == "constant", obj.Je = NaN; end   % impulsive accelerations: undefined
+            if P.name == "FO-0", obj.Je = NaN; end   % impulsive accelerations: undefined
             [vPeak, uPeak] = SpeedProfile.peaks(P);
             obj.peakSpeed = max(obj.peakSpeed, vPeak);
             obj.peakAccel = max(obj.peakAccel, uPeak);

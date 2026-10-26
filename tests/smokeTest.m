@@ -9,13 +9,21 @@ function smokeTest()
 %    scenario (Configurations/ReportLayout.mat, 5 agents) without error, with a finite J,
 %    finite agent positions, R >= 0, and at least one agent leaving its start target.
 % 4. Edge cases: a team mixing all agent types and an agent on a target with no edges, under
-%    every policy; Random Walk (clearing dwell) and Battery Efficient (cmd.dwellSeconds) dwell;
+%    every policy; Random Walk dwells (clearing dwell), and so does a policy that asks for its dwell
+%    in the move command (cmd.dwellSeconds; tests/FixedDwellPolicy);
 %    runTrial with the paper preset (Experiments/paper/paperDefaults); ED-ORHC-SO / -FO with
 %    speed and acceleration limits keep every agent within them.
 % 5. Agent types: the older type names still resolve (aliases); every type x speed profile runs;
-%    only agents at rest service targets; physical agents keep pace on wall-routed edges; the
+%    only agents at rest service targets; a physical agent arrives within a step or two of its
+%    planned time on a wall-routed edge, and keeps the transit times ED-RHC plans; the energy
+%    model ED-ORHC plans with matches the energy a physical agent draws on a curved edge; the
 %    heading turns smoothly on curved paths; William's Joint RHC harness (runTrial defaults with
 %    'Linear Agent') runs.
+% 6. Scenarios (scenarioCatalog): each loads (with its background image, if any) and runs 10 s
+%    under every policy with Abstract Agents, and under Random Walk with Physical Agents.
+% 7. Battery and charging: an agent's predicted transit energy matches the energy it draws;
+%    on the office floor with a charging dock (small batteries that stop the robots when empty)
+%    Battery-Aware ED-RHC recharges every agent in time, while ED-RHC runs out.
 % Prints one line per check and errors at the end (non-zero exit under -batch) if any failed.
 
 root = fileparts(fileparts(mfilename('fullpath')));
@@ -95,11 +103,23 @@ try
 catch err
     check(false, "runTrial: paper preset  ERROR " + err.message);
 end
-for name = ["Random Walk", "Battery Efficient"]
-    [~, ~, dwelled] = runScenario(@() reportScenario('Dijkstra Corners', {'Physical Agent'}), name, 20, true);
-    check(dwelled, name + " agents dwell at targets");
+[~, ~, dwelled] = runScenario(@() reportScenario('Dijkstra Corners', {'Physical Agent'}), "Random Walk", 20, true);
+check(dwelled, "Random Walk agents dwell at targets");
+try   % a dwell requested in the move command is spent at the target before leaving
+    sim = reportScenario('Dijkstra Corners', {'Abstract Agent'});
+    sim.policyMap('Fixed Dwell (test)') = FixedDwellPolicy();
+    sim.setActivePolicy('Fixed Dwell (test)'); sim.resetSimulationState();
+    a = sim.agents(1); start = a.state.pos; waited = 0; clock = SimulationClock(1.9, 0.05);
+    while ~clock.isFinished()
+        dt = clock.tick(); sim.step(dt, clock.currentTime); sim.updateTargetsAndLogObjective(clock.currentTime, dt);
+        waited = waited + (a.dwellRemaining > 0);
+    end
+    check(norm(a.state.pos - start) < 1e-9 && waited > 30 && ~isempty(a.path), ...
+        'cmd.dwellSeconds: the agent waits at its target, with the next path set');
+catch err
+    check(false, "cmd.dwellSeconds  ERROR " + err.message);
 end
-for name = ["ED-ORHC-SO", "ED-ORHC-FO"]
+for name = ["ED-ORHC-SO", "ED-ORHC-FO-3"]
     try
         sim = reportScenario('Dijkstra Corners', {'Abstract Agent'});
         sim.setActivePolicy(char(name));
@@ -121,8 +141,8 @@ for name = ["ED-ORHC-SO", "ED-ORHC-FO"]
 end
 
 % ---- 5. Agent types ----
-aliasClass = {'Linear Agent', 'AbstractAgent', "constant"; 'Second-Order Agent', 'AbstractAgent', "SO"; ...
-    'Default Agent', 'PhysicalAgent', "constant"; 'Energy Agent', 'PhysicalAgent', "constant"};
+aliasClass = {'Linear Agent', 'AbstractAgent', "FO-0"; 'Second-Order Agent', 'AbstractAgent', "SO"; ...
+    'Default Agent', 'PhysicalAgent', "FO-0"; 'Energy Agent', 'PhysicalAgent', "FO-0"};
 for k = 1:size(aliasClass, 1)
     a = feval(reg.factoryFor('agenttype', aliasClass{k, 1}), 1, [0 0], 10);
     check(isa(a, aliasClass{k, 2}) && a.profile == aliasClass{k, 3}, ...
@@ -154,20 +174,61 @@ try   % service only at rest
 catch err
     check(false, "service at rest  ERROR " + err.message);
 end
-try   % physical agents keep pace on a wall-routed edge (no crawling)
+try   % physical agents arrive when planned on a wall-routed edge
     sim = reportScenario('Dijkstra Corners', {'Physical Agent'});
     e = sim.findEdge(8, 2); P = e.curvePoints; y = sum(vecnorm(diff(P, 1, 1), 2, 2));
     a = PhysicalAgent(1, P(1, :), 15); a.path = P; t = 0;
     while ~isempty(a.path) && t < 60, a.update(0.05); t = t + 0.05; end
-    check(t < y / 15 + 3, sprintf('physical agent crosses edge 8-2 (%.1f m) in %.1f s (planned %.1f s)', y, t, y / 15));
+    check(t >= a.legTime && t <= a.legTime + 0.1 + 1e-9 && a.legTime == a.shortestTransit(P), ...
+        sprintf('physical agent crosses edge 8-2 (%.1f m) in %.2f s (planned %.2f s, its shortest)', y, t, a.legTime));
 catch err
-    check(false, "physical agent pace  ERROR " + err.message);
+    check(false, "physical agent arrival  ERROR " + err.message);
+end
+try   % ED-RHC plans with the physical agents' own transit times, and they keep them
+    sim = reportScenario('Dijkstra Corners', {'Physical Agent'});
+    sim.setActivePolicy('ED-RHC'); sim.resetSimulationState();
+    step = 0.05; clock = SimulationClock(60, step); nA = numel(sim.agents);
+    moving = false(1, nA); t0 = zeros(1, nA); handed = zeros(1, nA); late = [];
+    while ~clock.isFinished()
+        dt = clock.tick(); sim.step(dt, clock.currentTime); sim.updateTargetsAndLogObjective(clock.currentTime, dt);
+        for k = 1:nA
+            a = sim.agents(k); now = ~isempty(a.path) && a.dwellRemaining <= 0;
+            if now && ~moving(k), t0(k) = clock.currentTime - dt; handed(k) = a.transitTime; end
+            if ~now && moving(k) && isempty(a.path), late(end+1) = clock.currentTime - t0(k) - handed(k); end %#ok<AGROW>
+            moving(k) = now;
+        end
+    end
+    check(numel(late) > 10 && all(late > -1e-9 & late <= 2 * step + 1e-9), sprintf(['ED-RHC with ' ...
+        'physical agents: %d transits, arrival - planned in [%.3f, %.3f] s'], numel(late), min(late), max(late)));
+catch err
+    check(false, "ED-RHC physical transit times  ERROR " + err.message);
+end
+try   % the energy ED-ORHC plans with is the energy the agent draws
+    sim = reportScenario('Dijkstra Corners', {'Physical Agent'});
+    P = sim.findEdge(8, 2).curvePoints; y = sum(vecnorm(diff(P, 1, 1), 2, 2));
+    a = PhysicalAgent(1, P(1, :), 15);
+    rho = 1.5 * a.shortestTransit(P);
+    f = a.transitEnergyModel(P, y, "SO", Inf, Inf, [a.shortestTransit(P) 250]);
+    a.transitProfile = "SO"; a.transitTime = rho; a.path = P; t = 0;
+    while ~isempty(a.path) && t < 60, a.update(0.05); t = t + 0.05; end
+    cf = SpeedProfile.energy("SO", y, rho);
+    ab = AbstractAgent(1, P(1, :), 15);
+    g = ab.transitEnergyModel(P, y, "SO", Inf, Inf, [1 250]);
+    check(abs(f(rho) / a.Je - 1) < 0.02 && isequal(g([rho; 2 * rho]), SpeedProfile.energy("SO", y, [rho; 2 * rho])), ...
+        sprintf(['ED-ORHC energy model on edge 8-2 (SO, %.1f s): Physical Agent predicted %.1f, drawn %.1f ' ...
+        '(closed form %.1f); Abstract Agent = closed form'], rho, f(rho), a.Je, cf));
+catch err
+    check(false, "transit energy model  ERROR " + err.message);
 end
 try   % smooth heading on a curved path
     a = AbstractAgent(1, P(1, :), 15); a.path = P; ori = []; om = [];
     while ~isempty(a.path), a.update(0.05); ori(end+1) = a.state.ori; om(end+1) = a.state.omega; end %#ok<AGROW>
     jump = max(abs(angle(exp(1i * diff(ori)))));
-    check(jump < 0.6 && all(isfinite(om)), sprintf('abstract agent heading on a curved edge: largest step %.2f rad, max |omega| %.1f rad/s', jump, max(abs(om))));
+    D = diff(P); th = atan2(D(:, 2), D(:, 1)); len = vecnorm(D, 2, 2);         % tightest turn of the path
+    rmin = min((len(1:end-1) + len(2:end)) / 2 ./ max(abs(angle(exp(1i * diff(th)))), eps));
+    bound = max(0.6, 1.2 * 15 * 0.05 / rmin);   % the turn the path itself asks for at speed 15
+    check(jump < bound && all(isfinite(om)), sprintf(['abstract agent heading on a curved edge: largest step %.2f rad ' ...
+        '(path''s tightest radius %.2f allows %.2f), max |omega| %.1f rad/s'], jump, rmin, bound, max(abs(om))));
 catch err
     check(false, "curved heading  ERROR " + err.message);
 end
@@ -176,6 +237,59 @@ try   % William's harness: Joint RHC, 2 'Linear Agent's, Dynamic Uncertainty
     check(isfinite(out.finalJ), sprintf('runTrial defaults (Joint RHC, Linear Agent alias): J(20 s) = %.4f', out.finalJ));
 catch err
     check(false, "runTrial defaults  ERROR " + err.message);
+end
+
+% ---- 6. Scenarios ----
+warnState = warning('off', 'runTrial:AgentPolicyFit');
+cat = scenarioCatalog();
+for k = 1:height(cat)
+    tmp = load(cat.File(k), 's'); sc = tmp.s;
+    if isfield(sc, 'background') && strlength(string(sc.background)) > 0
+        check(ScenarioModel.backgroundFile(sc.background) ~= "", sprintf('scenario "%s": background %s found', cat.Name(k), sc.background));
+    end
+    mapScenario = ~startsWith(cat.Name(k), "JS:");
+    if mapScenario, pols = policies; else, pols = {'ED-RHC'}; end
+    combos = [pols(:), repmat({'Abstract Agent'}, numel(pols), 1)];
+    if mapScenario, combos(end+1, :) = {'Random Walk', 'Physical Agent'}; end %#ok<AGROW>
+    bad = strings(0, 1);
+    for c = 1:size(combos, 1)
+        [ok, detail] = runScenario(@() scenarioModel(sc, combos{c, 2}), combos{c, 1}, 10, false);
+        if ~ok, bad(end+1) = combos{c, 1} + " / " + combos{c, 2} + ": " + detail; end %#ok<AGROW>
+    end
+    check(isempty(bad), sprintf('scenario "%s": %d policy/agent runs%s', cat.Name(k), size(combos, 1), ...
+        join([""; bad], newline + "      ")));
+end
+warning(warnState);
+
+% ---- 7. Battery and charging ----
+try   % predicted transit energy = energy drawn, on a wall-routed edge
+    sim = reportScenario('Dijkstra Corners', {'Abstract Agent'});
+    P = sim.findEdge(8, 2).curvePoints;
+    for typeName = ["Abstract Agent", "Physical Agent"]
+        a = feval(reg.factoryFor('agenttype', char(typeName)), 1, P(1, :), 15);
+        rho = max(sum(vecnorm(diff(P), 2, 2)) / 15, a.shortestTransit(P));
+        Epred = a.transitEnergy(P, rho);
+        a.transitTime = rho; a.path = P; t = 0;
+        while ~isempty(a.path) && t < 60, a.update(0.05); t = t + 0.05; end
+        dev = a.battery.energyUsed / Epred - 1;
+        check(abs(dev) < 0.02, sprintf('%s: transit energy on edge 8-2 predicted %.0f J, drawn %.0f J (%+.1f%%)', ...
+            typeName, Epred, a.battery.energyUsed, 100 * dev));
+    end
+catch err
+    check(false, "transit energy prediction  ERROR " + err.message);
+end
+try   % the battery-aware policy recharges in time; ED-RHC runs out
+    tmp = load(fullfile(root, 'Configurations', 'OfficeDock.mat'), 's'); dock = tmp.s;
+    T = 600;
+    for typeName = ["Abstract Agent", "Physical Agent"]
+        [low, n, J] = batteryRun(dock, 'Battery-Aware ED-RHC', typeName, T);
+        check(low > 0 && n >= 3 && isfinite(J), sprintf(['Battery-Aware ED-RHC, %s, office ' ...
+            'with dock (%d s): lowest SOC %.1f%%, %d charges, J = %.1f'], typeName, T, low, n, J));
+    end
+    [low, ~, J] = batteryRun(dock, 'ED-RHC', "Abstract Agent", T);
+    check(low <= 0, sprintf('ED-RHC there runs out of battery (lowest SOC %.1f%%, J = %.1f)', low, J));
+catch err
+    check(false, "battery-aware policy  ERROR " + err.message);
 end
 
 if isempty(failures)
@@ -198,7 +312,7 @@ end
     function [ok, detail, dwelled] = runScenario(build, policyName, T, mustMove)
         % Runs the model from build() for T seconds under the policy; dwelled reports whether
         % any agent waited at a target
-        rng(0);   % Random Walk / Battery Efficient dwell draws
+        rng(0);   % Random Walk dwell draws
         dwelled = false;
         try
             sim = build();
@@ -222,6 +336,28 @@ end
             ok = false;
             detail = sprintf('ERROR %s (%s, line %d)', err.message, err.stack(1).name, err.stack(1).line);
         end
+    end
+
+    function [low, charges, J] = batteryRun(sc, policyName, typeName, T)
+        % Lowest SOC [%] of any agent, charging sessions (NaN if the policy does not count
+        % them) and J(T) of a run of layout sc
+        sim = scenarioModel(sc, typeName);
+        sim.setMetrics(["Average Uncertainty J(t)", "Minimum SOC"]);
+        sim.setActivePolicy(policyName); sim.resetSimulationState();
+        clock = SimulationClock(T, 0.05);
+        while ~clock.isFinished()
+            dt = clock.tick(); sim.step(dt, clock.currentTime); sim.updateTargetsAndLogObjective(clock.currentTime, dt);
+        end
+        v = sim.metricValues(clock.currentTime);
+        low = v.MinimumSOC; J = v.AverageUncertainty;
+        charges = NaN; if isprop(sim.policy, 'charges'), charges = sim.policy.charges; end
+    end
+
+    function sim = scenarioModel(sc, typeName)
+        % A scenario layout with agents of typeName
+        sim = ScenarioModel();
+        sim.setAgentType(typeName);
+        sim.importLayout(sc);
     end
 
     function sim = reportScenario(plannerName, typeNames)

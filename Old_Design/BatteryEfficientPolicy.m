@@ -1,8 +1,16 @@
-classdef BatteryEfficientPolicy < handle
+classdef BatteryEfficientPolicy < Policy
+    % RETIRED on 2026-10-21 and kept here for reference only (not registered). Gabriel Fanshteyn's
+    % heuristic: always move to the nearest neighbor (straight-line distance) after a short random
+    % dwell, a longer one below criticalBatteryThreshold SOC. It never recharges and has no formal
+    % basis; Battery-Aware ED-RHC (BatteryAwareRHCPolicy, with charging stations) replaces it.
     properties
         criticalBatteryThreshold = 20.0 % Percentage
         dwellRange = [0.5 1.5]          % dwell at each target ~ U(dwellRange) seconds; [0 0] = no dwell
         lowBatteryDwellRange = [5 10]   % dwell when the battery is below the threshold
+    end
+
+    properties (Constant)
+        agentAssumption = "any"   % what it assumes of the agents' motion (see ComponentRegistry.assumptionOf)
     end
 
     methods

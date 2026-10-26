@@ -6,6 +6,7 @@ classdef GraphEditController < handle
         edgePick = []      
         wallPoints = []    
         clickTol = 3.0
+        stationPower = 100   % charging power [W] of the stations added next
         statusCallback 
         gridStep = 5
         xMin = 0
@@ -30,7 +31,9 @@ classdef GraphEditController < handle
         end
 
         function importBackground(obj)
-            obj.renderer.loadBackgroundImage();
+            file = obj.renderer.loadBackgroundImage();
+            if file == "", return; end
+            obj.model.background = string(file);   % saved with the layout
             obj.say("Background image loaded.");
         end
 
@@ -49,6 +52,11 @@ classdef GraphEditController < handle
                 case "addTarget"
                     obj.model.addTarget(snappedPos);
                     obj.renderer.renderAll(obj.model);
+                case "addStation"
+                    obj.model.addStation(snappedPos, obj.stationPower);
+                    obj.renderer.renderAll(obj.model);
+                    obj.say(sprintf("Charging station T%d (%g W) added; connect it with Add Edge.", ...
+                        numel(obj.model.targets), obj.stationPower));
                 case "addAgent"
                     [~, ok, msg] = obj.model.addAgentOnTarget(pos, agentSpeed, obj.clickTol);
                     if ~ok && msg ~= ""
@@ -109,7 +117,7 @@ classdef GraphEditController < handle
             i = obj.edgePick(1);
             j = obj.edgePick(2);
             [~, ok, msg] = obj.model.addEdgeByTargets(i, j);
-            if ok
+            if ok && msg == ""
                 obj.say(sprintf("Shortest path planned T%d to T%d", i, j));
             else
                 obj.say(msg);

@@ -1,4 +1,4 @@
-classdef RandomWalkPolicy < handle
+classdef RandomWalkPolicy < Policy
     % Random walk with clearing dwells. Event-driven like ED-RHC, but an agent acts only at two
     % of its own events:
     %   arrival:    it dwells for U[1 - dwellSpread, 1 + dwellSpread] times the time to empty
@@ -11,6 +11,10 @@ classdef RandomWalkPolicy < handle
     properties
         dwellSpread = 0.2   % half-width of the dwell range, as a fraction of the time to empty
         dwellScale = 1      % mean dwell as a multiple of the time to empty (0 = no dwell)
+    end
+
+    properties (Constant)
+        agentAssumption = "any"   % what it assumes of the agents' motion (see ComponentRegistry.assumptionOf)
     end
 
     properties (Access = private)

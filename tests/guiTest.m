@@ -19,6 +19,7 @@ classdef guiTest < matlab.uitest.TestCase
             rng(0);
             tc.ui = MainUI('Monitor', MainUI.secondaryMonitor());
             tc.addTeardown(@() closeUI(tc.ui));
+            waitForLayout(tc.ui);
         end
     end
 
@@ -68,19 +69,16 @@ classdef guiTest < matlab.uitest.TestCase
 
         function guiAndHeadlessRunsAgree(tc)
             % The same scenario run through the GUI and through runTrial gives the same J(T).
-            % Battery Efficient without its dwell is deterministic.
+            % ED-RHC is deterministic.
             T = 60;
             p = paperDefaults();
             tc.choose(tc.ui.agentTypeDropdown, char(p.AgentType));   % same agents as runTrial
             tc.ui.loadLayout(fullfile(tc.root, 'Configurations', 'ReportLayout.mat'));
-            tc.choose(tc.ui.policyDropdown, 'Battery Efficient');
-            pol = tc.ui.model.policyMap('Battery Efficient');
-            pol.dwellRange = [0 0];
+            tc.choose(tc.ui.policyDropdown, 'ED-RHC');
             tc.type(tc.ui.endTimeField, T);
             tc.press(button(tc, 'Run to End'));
             Jgui = tc.ui.model.cumUncertaintyIntegral / tc.ui.clock.currentTime;
             p.EndTime = T;
-            p.Policy_dwellRange = [0 0];
             p.Log = false;
             out = runTrial(p);
             tc.verifyEqual(Jgui, out.finalJ, 'RelTol', 1e-12);
@@ -168,6 +166,75 @@ classdef guiTest < matlab.uitest.TestCase
             tc.verifyEqual(tc.ui.clock.currentTime, 5, 'AbsTol', 1e-9, 'run finished without error');
         end
 
+        function loadsEveryScenario(tc)
+            % One click on the Scenario dropdown loads the map, targets, edges, walls and agents
+            cat = scenarioCatalog();
+            for name = cat.Name(~startsWith(cat.Name, "JS:"))'
+                tc.choose(tc.ui.scenarioDropdown, char(name));
+                tmp = load(cat.File(cat.Name == name), 's');
+                m = tc.ui.model;
+                tc.verifyEqual(numel(m.targets), size(tmp.s.targets, 1), name + ": targets");
+                tc.verifyEqual(numel(m.agents), numel(tmp.s.agentStarts), name + ": agents");
+                if isfield(tmp.s, 'background') && strlength(string(tmp.s.background)) > 0
+                    tc.verifyTrue(isgraphics(tc.ui.renderer.bgImageHandle), name + ": background shown");
+                end
+                tc.type(tc.ui.endTimeField, 3);
+                tc.press(button(tc, 'Run to End'));
+                tc.verifyTrue(isfinite(m.cumUncertaintyIntegral), name + ": runs");
+                snap(tc, char("scenario_" + lower(regexprep(name, '[^A-Za-z]', ''))));
+            end
+        end
+
+        function addsStationByClicking(tc)
+            % Add Station places a charging station with the power typed next to the button
+            tc.press(button(tc, 'Add Target'));
+            tc.press(tc.ui.ax, [20 50]);
+            tc.type(tc.ui.stationPowerField, 250);
+            tc.press(button(tc, 'Add Station'));
+            drawnow;   % let the mode switch land before the click (after a long test it can lag)
+            tc.assertEqual(tc.ui.controller.mode, "addStation", 'Add Station switches the mode');
+            tc.press(tc.ui.ax, [70 50]);
+            drawnow;
+            m = tc.ui.model;
+            tc.verifyEqual(numel(m.targets), 2, 'station added by clicking');
+            tc.verifyClass(m.targets(2), 'ChargingStation');
+            tc.verifyEqual(m.targets(2).chargePower, 250, 'station power from the field');
+            tc.press(button(tc, 'Add Edge'));
+            tc.press(tc.ui.ax, [20 50]);
+            tc.press(tc.ui.ax, [70 50]);
+            tc.verifyEqual(numel(m.edges), 1, 'station connected like a target');
+            snap(tc, 'station_added');
+        end
+
+        function paperProfileFiltersMenus(tc)
+            % A paper profile shows only what its paper uses; the model follows the shown
+            % selections; a layout may still use a hidden option; Full shows everything again
+            tc.verifyEqual(tc.ui.paperProfileDropdown.Value, 'Full');
+            tc.choose(tc.ui.paperProfileDropdown, 'Energy paper');
+            tc.verifyEqual(sort(string(tc.ui.policyDropdown.Items)), ...
+                sort(["ED-RHC", "ED-ORHC-SO", "ED-ORHC-FO-3", "Battery-Aware ED-RHC", "Energy-Aware ED-RHC"]));
+            tc.verifyEqual(string(tc.ui.profileDropdown.ItemsData), ["SO", "FO-3"]);
+            tc.verifyEqual(tc.ui.model.activePolicy, tc.ui.policyDropdown.Value, 'model follows the shown policy');
+            tc.verifyEqual(tc.ui.model.agentSpec.profile, string(tc.ui.profileDropdown.Value), ...
+                'new agents take the shown speed profile');
+            snap(tc, 'paper_profile_energy');
+            tc.ui.loadLayout(fullfile(tc.root, 'Configurations', 'ReportLayout.mat'));
+            tc.verifyEqual(string(tc.ui.profileDropdown.Value), tc.ui.model.agents(1).profile, ...
+                'a loaded layout shows its agents'' profile even if the paper profile hides it');
+            tc.choose(tc.ui.paperProfileDropdown, 'Collaboration paper');
+            tc.verifyEqual(sort(string(tc.ui.policyDropdown.Items)), sort(["ED-RHC", "Collab-ED-RHC"]));
+            names = scenarioCatalog().Name;
+            maps = ["Lab floor (Stevens)", "Office floor", "City patrol", "Harbor patrol", "Campus"];
+            shown = names(startsWith(names, ["JS: ", "Collab: "]) | ismember(names, maps));
+            tc.verifyEqual(sort(string(tc.ui.scenarioDropdown.Items(2:end))), sort(shown(:)'), ...
+                'JS presets, Collab setups and the five maps');
+            tc.choose(tc.ui.scenarioDropdown, 'JS: 3 agents, general');
+            tc.verifyEqual(numel(tc.ui.model.agents), 3);
+            tc.choose(tc.ui.paperProfileDropdown, 'Full');
+            tc.verifyEqual(numel(tc.ui.policyDropdown.Items), numel(tc.ui.registry.keysFor('policy')));
+            tc.verifyEqual(numel(tc.ui.scenarioDropdown.Items), height(scenarioCatalog()) + 1);
+        end
+
         function addsTargetsOverBackgroundImage(tc)
             tc.ui.renderer.loadBackgroundImage(fullfile(tc.root, 'LabLayout.png'));
             tc.press(button(tc, 'Add Target'));
@@ -188,6 +255,21 @@ classdef guiTest < matlab.uitest.TestCase
             exportapp(tc.ui.objectiveWin.fig, fullfile(tc.outDir, [name '_objective.png']));
         end
     end
+end
+
+function waitForLayout(ui)
+% Clicks on the canvas land where its laid-out position says. A new window lays out its grid
+% asynchronously (slowly after a long test), and until then the axes keep a default 400 x 300
+% px size, so wait until their size has settled
+drawnow;
+last = [];
+t0 = tic;
+while toc(t0) < 10
+    p = getpixelposition(ui.ax, true);
+    if isequal(p, last) && p(3) > 400, break; end
+    last = p;
+    pause(0.1); drawnow;
+end
 end
 
 function closeUI(ui)

@@ -1,22 +1,21 @@
 %% Simulator Paper Results
 % This live script regenerates every result reported in the simulator paper
-% (|Paper_PerMonSimulator/ArXiv.tex|): Tables I-IV and Figs. 2, 3, and 5-13. Run all sections
-% (Live Editor: *Run All*). To get the same report without the Live Editor, run from the
-% repository root:
+% (|Paper_PerMonSimulator/ArXiv.tex|): Tables II-VI, the numbers quoted in the text, and the
+% figures made by code. Run all sections (Live Editor: *Run All*). To get the same report
+% without the Live Editor, run from the repository root:
 %
 %   matlab -batch "addpath(genpath(pwd)); exportPaperResults"
 %
-% Fig. 1 (the legacy JavaScript simulator) and Fig. 4 (the UML diagram, drawn in LaTeX) are not
-% produced by code. GUI windows open on a secondary monitor when there is one and close when
-% their figure is saved.
-%
-% The experiments are defined in |paperDefaults| (the reference scenario) and |paperConditions|
-% (what each experiment varies); change them there to change the paper's experiments. This
+% The case studies are defined in |paperDefaults| (the reference scenario) and
+% |paperConditions| (what each case study varies). The outputs go to |results/paper/| and, when
+% the paper's folder sits next to this repository (|../Paper_PerMonSimulator|), its
+% |generated/| folder receives the tables, macros and figures the paper includes. GUI windows
+% open on a secondary monitor when there is one and close when their figure is saved. This
 % file is built from |Experiments/paper/paperResultsSource.m| by |buildPaperResults|.
 
 %% Settings
-% |QuickMode| shortens every run to 60 s and uses 2 seeds, to check the pipeline in about two
-% minutes. A full run takes about ten minutes.
+% |QuickMode| shortens every run to 60 s, uses at most two seeds and one validation problem,
+% to check the pipeline in a few minutes. A full run takes about an hour.
 QuickMode = false;
 quick = getenv("PAPER_RESULTS_QUICK");   % set by exportPaperResults(Quick=true)
 if quick ~= "", QuickMode = quick == "1"; end
@@ -24,80 +23,85 @@ root = fileparts(which('MainUI'));
 assert(root ~= "", 'Make the repository root (the folder with MainUI.m) the current folder.');
 addpath(genpath(root));
 rmpath(genpath(fullfile(root, 'Old_Design')));
+warning('off', 'runTrial:AgentPolicyFit');
 base = paperDefaults();
-seeds = 1:4;
 outDir = fullfile(root, 'results', 'paper');
-modeName = "Full";
+presets = 1:8;
 if QuickMode
-    modeName = "Quick";
-    base.EndTime = 60;
-    seeds = 1:2;
     outDir = fullfile(root, 'results', 'paper_quick');
+    presets = 1;
 end
 figDir = fullfile(outDir, 'figures');
-fprintf('%s mode: T = %g s, seeds %s, output in %s\n', modeName, base.EndTime, mat2str(seeds), outDir);
+fprintf('%s mode, output in %s\n', string(QuickMode), outDir);
 
-%% Table I: fixed parameters
-% Every value is read from the code and the layout file.
-parameters = paperTables("parameters", base, seeds)
+%% Fixed parameters of the case studies
+% Every value is read from the code and the layout file; the paper states them in the text.
+parameters = paperTables("parameters", base)
 
-%% Figs. 9 and 2: the reference scenario in the GUI
-% |Configurations/ReportLayout.mat| over the Stevens Smart Lab map: 11 targets, 10 edges,
-% 3 walls, and 5 agents on targets 1, 6, 2, 3, and 5. Fig. 9 shows it at t = 0 and Fig. 2
-% after a short run with the Battery Efficient policy.
-showImages([paperGuiFigures("setup", figDir); paperGuiFigures("overview", figDir)]);
+%% Tables II and III: validation against the JS simulator
+% ED-RHC (RHC and RHC-alpha) and ED-ORHC (SO and FO) on the eight presets of the legacy JS
+% simulator, under its settings (Experiments/validation).
+Ted = validateEDRHC(Presets=presets);
+Teo = validateEDORHC(Presets=presets);
+validation = paperTables("validation", Ted, Teo)
 
-%% Table II and Figs. 10-11: movement policies
-% Random Walk vs Battery Efficient, with the Dijkstra Corners planner and Physical Agents.
-policy = paperRuns(base, paperConditions("policy"), seeds);
-paperTables("policy", policy)
-paperPlots("objective", policy, fullfile(figDir, "fig10_objective_random_walk"), Condition="Random Walk");
-paperPlots("objective", policy, fullfile(figDir, "fig11_objective_battery_efficient"), Condition="Battery Efficient");
+%% Table IV and Fig. 9: policies and agent types
+% Random Walk (ten seeds), ED-RHC, ED-ORHC-SO and ED-ORHC-FO-3 with Abstract and Physical Agents
+% on the reference scenario (Dijkstra Corners).
+policies = paperRuns(base, paperConditions("policies"), Quick=QuickMode);
+paperTables("policies", policies)
+paperPlots("objectives", policies, fullfile(figDir, "fig_objectives"));
 
-%% Table III and Fig. 12: path planners
-% Dijkstra Corners vs Energy Efficient, with the Battery Efficient policy and Physical Agents.
-% L, Theta, and E_a are summed over the five agents; all values are means over the runs.
-planner = paperRuns(base, paperConditions("planner"), seeds);
-paperTables("planner", planner)
+%% Table V and Fig. 10: path planners
+% Dijkstra Corners, Energy Efficient and Grid A* with ED-RHC and Physical Agents. Length and
+% Transit total the planned edges and the Physical Agent's shortest transit over each.
+planners = paperRuns(base, paperConditions("planners"), Quick=QuickMode);
+paperTables("planners", planners, base)
 showImages(paperGuiFigures("planners", figDir));
 
-%% Table IV and Fig. 13: battery
-% Both planners again, with the agents' batteries. SOC is the mean over agents and runs; Energy is the
-% team's energy drawn from the batteries, averaged over the runs.
-battery = paperRuns(base, paperConditions("battery"), seeds);
+%% Fig. 11: energy trade-off of ED-ORHC-SO
+% The energy weight follows App. A of the energy-aware paper for each beta; Abstract Agents
+% with the speed and acceleration limits.
+tradeoff = paperRuns(base, paperConditions("tradeoff"), Quick=QuickMode);
+paperTables("tradeoff", tradeoff)
+paperPlots("tradeoff", tradeoff, fullfile(figDir, "fig_tradeoff"));
+
+%% Table VI and Fig. 12: battery-aware ED-RHC with a charging station
+% Office floor with a 300 W charging dock and 2.5 Wh batteries that stop the agents when empty.
+battery = paperRuns(base, paperConditions("battery"), Quick=QuickMode);
 paperTables("battery", battery)
-paperPlots("soc", battery, fullfile(figDir, "fig13_soc"));
+paperPlots("soc", battery, fullfile(figDir, "fig_soc"));
 
-%% Fig. 3: a run in the GUI
-% |Configurations/ExampleLayout1.mat| with four Physical Agents and the Battery Efficient policy,
-% captured at six times.
-showImages(paperGuiFigures("reel", figDir, EndTime=base.EndTime));
+%% Figs. 3 and 5: the GUI and the scenario library
+guiFiles = paperGuiFigures("overview", figDir);
+guiFiles = [guiFiles(:); reshape(paperGuiFigures("scenarios", figDir), [], 1)];
+showImages(guiFiles);
 
-%% Figs. 5-8: agent types and policies in the GUI
-% |ExampleLayout1.mat| after several runs, with Physical Agents and Random Walk (Figs. 5 and 7)
-% and with Physical Agents and Battery Efficient (Figs. 6 and 8).
-showImages(paperGuiFigures("examples", figDir, EndTime=base.EndTime, Runs=numel(seeds)));
-
-%% Check against the draft
-% The draft's numbers were produced by hand in the GUI before Random Walk and Battery
-% Efficient dwelled at targets. Running the three experiments again with the dwell set to zero
-% recreates those conditions, so the |DraftConditions| column should be close to |Draft|
-% (Random Walk varies from run to run). |Current| holds the results above. The check needs the
-% draft's 500-s runs, so QuickMode skips it.
-comparison = table();
-if QuickMode
-    disp("Skipped in QuickMode.")
-else
-    draft.policy = paperRuns(base, paperConditions("policy", NoDwell=true), seeds);
-    draft.planner = paperRuns(base, paperConditions("planner", NoDwell=true), seeds);
-    draft.battery = paperRuns(base, paperConditions("battery", NoDwell=true), seeds);
-    current = struct('policy', policy, 'planner', planner, 'battery', battery);
-    comparison = paperComparison(current, draft)
+%% Figs. 6-8: getting started (Examples/EventDetection)
+% The walkthrough script builds the museum scenario through the GUI's click handlers, runs it,
+% and compares policies headless; its canvas snapshots are the steps shown in the paper.
+if ~QuickMode
+    runExample(root);
+    close all force
+    copyfile(fullfile(root, 'results', 'example', '*.png'), figDir);
 end
 
 %% Output files
-% |runs.csv| (every run), |comparison.csv|, LaTeX tables and macros for the paper, and the
-% figures (PNG; the plots also as PDF) in |figures/|.
-files = writePaperOutputs(outDir, struct('parameters', parameters, 'policy', policy, ...
-    'planner', planner, 'battery', battery, 'comparison', comparison))
+% |runs.csv| (every run), LaTeX tables and macros for the paper, and the figures (PNG; the
+% plots also as PDF) in |figures/|; then copied into the paper's |generated/| folder.
+files = writePaperOutputs(outDir, struct('base', base, 'validation', validation, ...
+    'policies', policies, 'planners', planners, 'tradeoff', tradeoff, 'battery', battery))
+paperDir = fullfile(fileparts(root), 'Paper_PerMonSimulator');
+if ~QuickMode && isfolder(paperDir)
+    gen = fullfile(paperDir, 'generated');
+    if ~isfolder(gen), mkdir(gen); end
+    copyfile(fullfile(outDir, '*.tex'), gen);
+    copyfile(fullfile(figDir, '*'), gen);
+    fprintf('Copied the tables, macros and figures to %s\n', gen);
+end
 writelines("Finished " + string(datetime("now")), fullfile(outDir, "finished.txt"));   % read by exportPaperResults
+
+function runExample(root)
+% The walkthrough in its own workspace (it defines root and outDir too)
+run(fullfile(root, 'Examples', 'EventDetection', 'eventDetectionExample.m'));
+end

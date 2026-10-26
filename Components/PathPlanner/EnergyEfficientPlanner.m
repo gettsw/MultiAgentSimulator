@@ -1,6 +1,7 @@
 classdef EnergyEfficientPlanner < DijkstraCornerPlanner
     % Minimizes distance + turning penalty so paths favor gentler bends,
-    % reducing the acceleration-squared term in the agents' battery power draw.
+    % reducing the acceleration-squared term in the agents' battery power draw. Corners are
+    % pushed further from the walls (cornerBuffer 2.5) so their arcs can be larger.
     properties
         turnPenalty double = 8.0   % cost per radian of heading change (same units as distance)
     end
@@ -9,7 +10,8 @@ classdef EnergyEfficientPlanner < DijkstraCornerPlanner
         function obj = EnergyEfficientPlanner()
             obj.cornerBuffer = 2.5;
             obj.wallProximity = 1.0;
-            obj.smoothingFactor = 20;
+            obj.filletClearance = 1.0;
+            obj.filletRadius = 15;
         end
 
         function path = plan(obj, pStart, pEnd, walls, bounds)
@@ -31,9 +33,7 @@ classdef EnergyEfficientPlanner < DijkstraCornerPlanner
                 end
             end
             pathIndices = obj.energyDijkstra(nodes, adj, 1, 2);
-            rawPath = nodes(pathIndices, :);
-            path = obj.smoothPath(rawPath);
-            path = obj.clampToBounds(path, bounds);
+            path = obj.finishPath(nodes, pathIndices, walls, bounds);
         end
     end
 
@@ -82,7 +82,7 @@ classdef EnergyEfficientPlanner < DijkstraCornerPlanner
             end
 
             if best_r == 0
-                idxs = [startNode, endNode];
+                idxs = endNode;            % unreachable: finishPath reports it
                 return;
             end
 

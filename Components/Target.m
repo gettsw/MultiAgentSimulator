@@ -1,4 +1,11 @@
-classdef Target < handle
+classdef Target < handle & matlab.mixin.Heterogeneous
+    % A monitored target (the default target type, "Uncertainty Target"). Its state is the
+    % uncertainty R, with dR/dt = A - B N while R > 0 or A > B N (N: agents at the target), and
+    % the model's objective is the time average of the sum of R over the targets.
+    % A new target type subclasses Target and overrides updateUncertainty(dt, simTime, mode) (and
+    % reset, for extra state); R is what the target's bar shows and what the objective sums. It
+    % is registered in ComponentRegistry (targetTypes) and chosen with ScenarioModel.setTargetType
+    % or the GUI's Target Type dropdown. Examples/EventDetection/SimpleTarget.m is a small example.
     properties
         index
         position
